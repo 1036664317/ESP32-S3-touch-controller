@@ -153,8 +153,8 @@ esp_err_t ui_init(void)
     lv_init();
 
     // Allocate draw buffers
-    g_ui.buf1 = heap_caps_malloc(LCD_WIDTH * 40 * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
-    g_ui.buf2 = heap_caps_malloc(LCD_WIDTH * 40 * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    g_ui.buf1 = heap_caps_malloc(LCD_WIDTH * 40 * sizeof(lv_color_t), MALLOC_CAP_DMA);
+    g_ui.buf2 = heap_caps_malloc(LCD_WIDTH * 40 * sizeof(lv_color_t), MALLOC_CAP_DMA);
     if (!g_ui.buf1 || !g_ui.buf2) {
         ESP_LOGE(TAG, "Failed to allocate LVGL buffers");
         return ESP_ERR_NO_MEM;
