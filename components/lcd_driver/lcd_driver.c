@@ -52,7 +52,13 @@ esp_err_t lcd_init(lcd_dev_t *dev, spi_host_device_t spi_host,
         .trans_queue_depth = 10,
     };
     spi_device_handle_t spi_dev;
-    spi_bus_get_handle(spi_host, &spi_dev);
+    spi_device_interface_config_t devcfg = {
+        .clock_speed_hz = LCD_SPI_CLOCK_HZ,
+        .mode = 0,
+        .spics_io_num = cs,
+        .queue_size = 10,
+    };
+    spi_bus_add_device(spi_host, &devcfg, &spi_dev);
     ret = esp_lcd_new_panel_io_spi(spi_dev, &io_config, &io_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LCD IO init failed: %s", esp_err_to_name(ret));

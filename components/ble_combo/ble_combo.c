@@ -24,7 +24,9 @@ static uint16_t gamepad_char_handle;
 static uint16_t mouse_char_handle;
 static uint16_t media_char_handle;
 
-// HID Report Descriptors
+// HID Report Descriptors (reserved for future GATT report map integration)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-const-variable"
 static const uint8_t hid_report_desc_gamepad[] = {
     0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x01,
     0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x32,
@@ -54,6 +56,7 @@ static const uint8_t hid_report_desc_media[] = {
     0xFF, 0x03, 0x75, 0x10, 0x95, 0x01, 0x81, 0x00,
     0xC0
 };
+#pragma GCC diagnostic pop
 
 static int gap_event_cb(struct ble_gap_event *event, void *arg)
 {
@@ -100,7 +103,7 @@ static void advertise(void)
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
     adv_params.itvl_min = 0x20;
     adv_params.itvl_max = 0x40;
-    adv_params.channel_map = BLE_GAP_CHNL_MAP_ALL;
+    adv_params.channel_map = 0x07;  // BLE_GAP_CHNL_MAP_ALL
 
     ble_gap_adv_start(0, NULL, BLE_HS_FOREVER, &adv_params, gap_event_cb, NULL);
     state.advertising = true;
@@ -159,7 +162,6 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
 
 static void gatt_svr_init(void)
 {
-    ble_hs_cfg.att_mtu = 247;
     ble_gatts_count_cfg(gatt_svcs);
     ble_gatts_add_svcs(gatt_svcs);
 }
