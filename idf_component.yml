@@ -1,0 +1,11 @@
+dependencies:
+  idf:
+    version: ">=5.0.0"
+  espressif/esp_lcd_touch_axs15231b:
+    version: "^1.0.0"
+  espressif/esp_lcd_neoled:
+    version: "^1.0.0"
+  lvgl/lvgl:
+    version: "^8.3.0"
+    rules:
+      - if: "idf_version >= 5.0"

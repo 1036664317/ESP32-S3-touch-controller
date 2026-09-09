@@ -1,0 +1,42 @@
+menu "VR Controller Configuration"
+
+    config VR_CONTROLLER_DEBUG
+        bool "Enable debug logging"
+        default y
+
+    config VR_CONTROLLER_I2C_TOUCH_PORT
+        int "I2C port for touch (AXS15231B)"
+        default 0
+        range 0 1
+
+    config VR_CONTROLLER_I2C_IMU_PORT
+        int "I2C port for IMU (QMI8658)"
+        default 1
+        range 0 1
+
+    config VR_CONTROLLER_SPI_LCD_HOST
+        int "SPI host for LCD"
+        default 3
+        range 1 3
+
+    config VR_CONTROLLER_JOYSTICK_DEADZONE
+        int "Joystick deadzone percentage (0-20)"
+        default 5
+        range 0 20
+
+    config VR_CONTROLLER_SLEEP_TIMEOUT_S
+        int "Sleep timeout in seconds (0=disabled)"
+        default 30
+        range 0 300
+
+    config VR_CONTROLLER_AIR_MOUSE_SENSITIVITY
+        int "Air mouse sensitivity (10-500)"
+        default 150
+        range 10 500
+
+    config VR_CONTROLLER_GESTURE_THRESHOLD
+        int "Gesture detection threshold (10-100)"
+        default 30
+        range 10 100
+
+endmenu
