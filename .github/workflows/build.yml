@@ -30,9 +30,9 @@ jobs:
         with:
           name: esp32s3-vr-controller-firmware
           path: |
-            build/esp32s3_vr_controller.bin
-            build/esp32s3_vr_controller.elf
-            build/bootloader/bootloader.bin
-            build/partition_table/partition-table.bin
+            build/*.bin
+            build/*.elf
+            build/bootloader/*.bin
+            build/partition_table/*.bin
             build/flasher_args.json
           retention-days: 30
