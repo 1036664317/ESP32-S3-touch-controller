@@ -9,3 +9,5 @@ __pycache__/
 *.swo
 *~
 .DS_Store
+esp32s3-vr-controller-firmware/
+esp32s3-vr-controller-firmware.zip
