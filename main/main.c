@@ -36,6 +36,9 @@ ble_combo_state_t g_ble;
 #define PIN_IMU_INT     5
 #define SPI_HOST_ID     SPI3_HOST
 
+static bool g_touch_ok = false;
+static bool g_imu_ok = false;
+
 static void on_ble_connected(void *ctx)
 {
     ESP_LOGI(TAG, "BLE connected - notifying UI");
@@ -53,19 +56,15 @@ static void imu_task(void *arg)
     TickType_t last_wake = xTaskGetTickCount();
 
     while (1) {
-        // Update IMU for air mouse
-        if (g_ui.air_mouse_active) {
-            ui_update_imu(&g_mahony, &g_imu);
+        if (g_imu_ok) {
+            if (g_ui.air_mouse_active) {
+                ui_update_imu(&g_mahony, &g_imu);
+            }
+            ui_detect_gesture(&g_imu);
+            ui_check_sleep(&g_imu);
+            ui_wake_from_imu(&g_imu);
         }
-
-        // Detect gestures
-        ui_detect_gesture(&g_imu);
-
-        // Check sleep/wake
-        ui_check_sleep(&g_imu);
-        ui_wake_from_imu(&g_imu);
-
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));  // 100Hz
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
     }
 }
 
@@ -74,8 +73,9 @@ static void ui_task(void *arg)
     TickType_t last_wake = xTaskGetTickCount();
 
     while (1) {
-        // Process touch
-        ui_process_touch(&g_touch);
+        if (g_touch_ok) {
+            ui_process_touch(&g_touch);
+        }
 
         // Update LVGL
         ui_update();
@@ -120,6 +120,8 @@ void app_main(void)
     ret = axs15231b_init(&g_touch, I2C_NUM_0, AXS15231B_I2C_ADDR);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Touch init failed: %s", esp_err_to_name(ret));
+    } else {
+        g_touch_ok = true;
     }
 
     // Initialize IMU
@@ -127,6 +129,8 @@ void app_main(void)
     ret = qmi8658_init(&g_imu, I2C_NUM_1, QMI8658_I2C_ADDR);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "IMU init failed: %s", esp_err_to_name(ret));
+    } else {
+        g_imu_ok = true;
     }
 
     // Initialize Mahony filter
