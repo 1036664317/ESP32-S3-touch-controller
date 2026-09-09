@@ -17,7 +17,7 @@ extern "C" {
 
 #define JOYSTICK_ZONE_W     (LCD_WIDTH * 0.40f)
 #define SCROLL_ZONE_X       (int)(JOYSTICK_ZONE_W)
-#define SCROLL_ZONE_W       (LCD_WIDTH - SCROLL_ZONE_W)
+#define SCROLL_ZONE_W       (LCD_WIDTH - SCROLL_ZONE_X)
 #define TOP_BAR_H           24
 #define BOTTOM_BAR_H        32
 #define CONTENT_Y           TOP_BAR_H

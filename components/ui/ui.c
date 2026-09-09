@@ -30,7 +30,6 @@ static lv_obj_t *cursor_obj;
 
 // Joystick tracking
 static bool joy_touching = false;
-static int joy_touch_x = 0, joy_touch_y = 0;
 static int joy_origin_x = 0, joy_origin_y = 0;
 static int joy_max_radius = 50;
 
@@ -528,8 +527,6 @@ void ui_detect_gesture(qmi8658_dev_t *imu)
 
     int64_t now = esp_timer_get_time();
     if (max_val > 3.0f && (now - gesture_last_time) > 1000000) {
-        // Determine direction by checking accel.x sign at peak
-        int peak_idx = (gesture_idx + 9) % 10;
         if (data.accel.x > 0.5f) {
             g_ui.gesture_right = true;
         } else if (data.accel.x < -0.5f) {
@@ -572,11 +569,7 @@ void ui_wake_from_imu(qmi8658_dev_t *imu)
 // ===== LVGL Callbacks =====
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p)
 {
-    // This will be called by the main code with lcd_dev reference
     extern lcd_dev_t g_lcd;
-    int w = area->x2 - area->x1 + 1;
-    int h = area->y2 - area->y1 + 1;
-    esp_lcd_panel_set_window(g_lcd.panel_handle, area->x1, area->y1, area->x2, area->y2);
     esp_lcd_panel_draw_bitmap(g_lcd.panel_handle, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_p);
     lv_disp_flush_ready(drv);
 }
