@@ -1,5 +1,6 @@
 #include "lcd_driver.h"
 #include "driver/ledc.h"
+#include "driver/spi_master.h"
 #include "esp_log.h"
 #include "esp_lcd_panel_vendor.h"
 #include <string.h>
@@ -50,7 +51,9 @@ esp_err_t lcd_init(lcd_dev_t *dev, spi_host_device_t spi_host,
         .spi_mode = 0,
         .trans_queue_depth = 10,
     };
-    ret = esp_lcd_new_panel_io_spi(spi_host, &io_config, &io_handle);
+    spi_device_handle_t spi_dev;
+    spi_bus_get_handle(spi_host, &spi_dev);
+    ret = esp_lcd_new_panel_io_spi(spi_dev, &io_config, &io_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LCD IO init failed: %s", esp_err_to_name(ret));
         return ret;
@@ -106,7 +109,6 @@ esp_err_t lcd_init(lcd_dev_t *dev, spi_host_device_t spi_host,
 esp_err_t lcd_fill_rect(lcd_dev_t *dev, uint16_t x, uint16_t y,
                          uint16_t w, uint16_t h, uint16_t color)
 {
-    esp_lcd_panel_set_window(dev->panel_handle, x, y, x + w - 1, y + h - 1);
     uint16_t *buf = heap_caps_malloc(w * h * sizeof(uint16_t), MALLOC_CAP_DMA);
     if (!buf) return ESP_ERR_NO_MEM;
     for (int i = 0; i < w * h; i++) buf[i] = color;
