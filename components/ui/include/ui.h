@@ -62,6 +62,9 @@ void ui_set_battery(uint8_t percent);
 void ui_update_imu(mahony_state_t *mahony, qmi8658_dev_t *imu);
 void ui_process_touch(axs15231b_dev_t *touch_dev);
 void ui_send_reports(ble_combo_state_t *ble_state);
+void ui_detect_gesture(qmi8658_dev_t *imu);
+void ui_check_sleep(qmi8658_dev_t *imu);
+void ui_wake_from_imu(qmi8658_dev_t *imu);
 
 #ifdef __cplusplus
 }
