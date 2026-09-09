@@ -26,15 +26,10 @@ qmi8658_dev_t g_imu;
 mahony_state_t g_mahony;
 ble_combo_state_t g_ble;
 
-// GPIO pins for ESP32-S3-Touch-LCD-3.49
-#define PIN_LCD_CS      7
-#define PIN_LCD_DC      10
-#define PIN_LCD_RST     6
-#define PIN_LCD_BL      38
-#define PIN_TOUCH_INT   9
-#define PIN_TOUCH_RST   4
-#define PIN_IMU_INT     5
-#define SPI_HOST_ID     SPI3_HOST
+// GPIO pins for ESP32-S3-Touch-LCD-3.49 V1
+// LCD QSPI: CS=9, PCLK=10, D0=11, D1=12, D2=13, D3=14, RST=21, BL=8
+// I2C0 (RTC+IMU): SDA=47, SCL=48
+// I2C1 (Touch): SDA=17, SCL=18
 
 static bool g_touch_ok = false;
 static bool g_imu_ok = false;
@@ -106,27 +101,26 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    // Initialize LCD
+    // Initialize LCD (QSPI, pins handled internally)
     ESP_LOGI(TAG, "Initializing LCD...");
-    ret = lcd_init(&g_lcd, SPI_HOST_ID, PIN_LCD_CS, PIN_LCD_DC, PIN_LCD_RST, PIN_LCD_BL,
-                   LCD_WIDTH, LCD_HEIGHT);
+    ret = lcd_init(&g_lcd, LCD_WIDTH, LCD_HEIGHT);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LCD init failed: %s", esp_err_to_name(ret));
         return;
     }
 
-    // Initialize touch
+    // Initialize touch (I2C1 on GPIO17/18)
     ESP_LOGI(TAG, "Initializing touch...");
-    ret = axs15231b_init(&g_touch, I2C_NUM_0, AXS15231B_I2C_ADDR);
+    ret = axs15231b_init(&g_touch, I2C_NUM_1, AXS15231B_I2C_ADDR);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Touch init failed: %s", esp_err_to_name(ret));
     } else {
         g_touch_ok = true;
     }
 
-    // Initialize IMU
+    // Initialize IMU (I2C0 on GPIO47/48)
     ESP_LOGI(TAG, "Initializing IMU...");
-    ret = qmi8658_init(&g_imu, I2C_NUM_1, QMI8658_I2C_ADDR);
+    ret = qmi8658_init(&g_imu, I2C_NUM_0, QMI8658_I2C_ADDR);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "IMU init failed: %s", esp_err_to_name(ret));
     } else {

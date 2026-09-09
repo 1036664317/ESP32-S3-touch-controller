@@ -25,7 +25,6 @@ typedef struct {
     bool pressed;
     uint16_t x;
     uint16_t y;
-    uint8_t gesture;  // 0=none, 1=up, 2=down, 3=left, 4=right, 5=click
 } axs15231b_touch_data_t;
 
 esp_err_t axs15231b_init(axs15231b_dev_t *dev, i2c_port_t port, uint8_t addr);

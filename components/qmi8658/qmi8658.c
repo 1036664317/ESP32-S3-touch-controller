@@ -59,8 +59,8 @@ esp_err_t qmi8658_init(qmi8658_dev_t *dev, i2c_port_t port, uint8_t addr)
 
     i2c_master_bus_config_t bus_config = {
         .i2c_port = port,
-        .sda_io_num = 17,
-        .scl_io_num = 18,
+        .sda_io_num = 47,
+        .scl_io_num = 48,
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
         .flags.enable_internal_pullup = true,

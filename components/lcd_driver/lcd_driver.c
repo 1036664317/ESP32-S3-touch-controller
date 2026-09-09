@@ -1,74 +1,127 @@
 #include "lcd_driver.h"
 #include "driver/ledc.h"
-#include "driver/spi_master.h"
-#include "esp_log.h"
 #include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 
 static const char *TAG = "LCD";
 
-#define LCD_SPI_CLOCK_HZ     (40 * 1000 * 1000)
-#define LCD_CMD_BITS         8
-#define LCD_PARAM_BITS       8
+// V1 Pin definitions for ESP32-S3-Touch-LCD-3.49
+#define LCD_CS_PIN      9
+#define LCD_PCLK_PIN    10
+#define LCD_D0_PIN      11
+#define LCD_D1_PIN      12
+#define LCD_D2_PIN      13
+#define LCD_D3_PIN      14
+#define LCD_RST_PIN     21
+#define LCD_BL_PIN      8
+#define LCD_HOST        SPI3_HOST
 
-esp_err_t lcd_init(lcd_dev_t *dev, spi_host_device_t spi_host,
-                   gpio_num_t cs, gpio_num_t dc, gpio_num_t rst, gpio_num_t bl,
-                   uint16_t width, uint16_t height)
+#define LCD_PCLK_HZ     (40 * 1000 * 1000)
+
+static void lcd_reset(void)
 {
-    dev->spi_host = spi_host;
-    dev->lcd_cs = cs;
-    dev->lcd_dc = dc;
-    dev->lcd_rst = rst;
-    dev->lcd_bl = bl;
+    gpio_set_direction(LCD_RST_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(LCD_RST_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(30));
+    gpio_set_level(LCD_RST_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    gpio_set_level(LCD_RST_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(30));
+}
+
+esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
+{
     dev->width = width;
     dev->height = height;
 
-    ESP_LOGI(TAG, "Initializing LCD %dx%d", width, height);
+    ESP_LOGI(TAG, "Initializing QSPI LCD %dx%d", width, height);
 
-    // SPI bus configuration
-    spi_bus_config_t buscfg = {
-        .mosi_io_num = 11,
-        .miso_io_num = -1,
-        .sclk_io_num = 12,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = width * height * sizeof(uint16_t),
-    };
-    esp_err_t ret = spi_bus_initialize(spi_host, &buscfg, SPI_DMA_CH_AUTO);
+    // Reset LCD
+    lcd_reset();
+
+    // QSPI bus configuration
+    spi_bus_config_t buscfg = {0};
+    buscfg.data0_io_num = LCD_D0_PIN;
+    buscfg.data1_io_num = LCD_D1_PIN;
+    buscfg.sclk_io_num = LCD_PCLK_PIN;
+    buscfg.data2_io_num = LCD_D2_PIN;
+    buscfg.data3_io_num = LCD_D3_PIN;
+    buscfg.max_transfer_sz = width * height * sizeof(uint16_t);
+
+    esp_err_t ret = spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    // LCD panel IO
+    // Panel IO configuration (QSPI mode)
     esp_lcd_panel_io_handle_t io_handle = NULL;
-    esp_lcd_panel_io_spi_config_t io_config = {
-        .dc_gpio_num = dc,
-        .cs_gpio_num = cs,
-        .pclk_hz = LCD_SPI_CLOCK_HZ,
-        .lcd_cmd_bits = LCD_CMD_BITS,
-        .lcd_param_bits = LCD_PARAM_BITS,
-        .spi_mode = 0,
-        .trans_queue_depth = 10,
-    };
-    ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)spi_host, &io_config, &io_handle);
+    esp_lcd_panel_io_spi_config_t io_config = {0};
+    io_config.cs_gpio_num = LCD_CS_PIN;
+    io_config.dc_gpio_num = -1;  // No DC pin for QSPI
+    io_config.spi_mode = 3;
+    io_config.pclk_hz = LCD_PCLK_HZ;
+    io_config.trans_queue_depth = 10;
+    io_config.lcd_cmd_bits = 32;  // 32-bit command for AXS15231B
+    io_config.lcd_param_bits = 8;
+    io_config.flags.quad_mode = true;
+
+    ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LCD IO init failed: %s", esp_err_to_name(ret));
         return ret;
     }
     dev->io_handle = io_handle;
 
-    // LCD panel handle
-    esp_lcd_panel_handle_t panel_handle = NULL;
-    esp_lcd_panel_dev_config_t panel_config = {
-        .reset_gpio_num = rst,
-        .rgb_endian = LCD_RGB_ENDIAN_RGB,
-        .bits_per_pixel = 16,
+    // AXS15231B vendor config for QSPI
+    typedef struct {
+        struct {
+            uint32_t use_qspi_interface: 1;
+        } flags;
+        const void *init_cmds;
+        uint16_t init_cmds_size;
+    } axs15231b_vendor_config_t;
+
+    // Minimal init commands: Sleep Out + Display On
+    typedef struct {
+        uint8_t cmd;
+        const uint8_t *data;
+        uint8_t data_len;
+        uint16_t delay_ms;
+    } lcd_init_cmd_t;
+
+    static const lcd_init_cmd_t init_cmds[] = {
+        {0x11, (uint8_t []){0x00}, 0, 100},  // Sleep Out
+        {0x29, (uint8_t []){0x00}, 0, 100},  // Display On
     };
-    ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
+
+    axs15231b_vendor_config_t vendor_config = {0};
+    vendor_config.flags.use_qspi_interface = 1;
+    vendor_config.init_cmds = init_cmds;
+    vendor_config.init_cmds_size = 2;
+
+    // Panel handle
+    esp_lcd_panel_handle_t panel_handle = NULL;
+    esp_lcd_panel_dev_config_t panel_config = {0};
+    panel_config.reset_gpio_num = -1;  // RST handled manually
+    panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB;
+    panel_config.bits_per_pixel = 16;
+    panel_config.vendor_config = &vendor_config;
+
+    ret = esp_lcd_new_panel_axs15231b(io_handle, &panel_config, &panel_handle);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "LCD panel init failed: %s", esp_err_to_name(ret));
-        return ret;
+        ESP_LOGE(TAG, "LCD panel init failed: %s, trying ST7789 fallback", esp_err_to_name(ret));
+        // Fallback to ST7789 if axs15231b not available
+        panel_config.vendor_config = NULL;
+        ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "LCD panel fallback also failed: %s", esp_err_to_name(ret));
+            return ret;
+        }
     }
     dev->panel_handle = panel_handle;
 
@@ -79,28 +132,26 @@ esp_err_t lcd_init(lcd_dev_t *dev, spi_host_device_t spi_host,
     esp_lcd_panel_mirror(panel_handle, false, false);
 
     // Turn on backlight
-    if (bl >= 0) {
-        ledc_timer_config_t ledc_timer = {
-            .speed_mode = LEDC_LOW_SPEED_MODE,
-            .duty_resolution = LEDC_TIMER_8_BIT,
-            .timer_num = LEDC_TIMER_0,
-            .freq_hz = 5000,
-            .clk_cfg = LEDC_AUTO_CLK,
-        };
-        ledc_timer_config(&ledc_timer);
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = LEDC_TIMER_8_BIT,
+        .timer_num = LEDC_TIMER_3,
+        .freq_hz = 50000,
+        .clk_cfg = LEDC_SLOW_CLK_RC_FAST,
+    };
+    ledc_timer_config(&ledc_timer);
 
-        ledc_channel_config_t ledc_channel = {
-            .speed_mode = LEDC_LOW_SPEED_MODE,
-            .channel = LEDC_CHANNEL_0,
-            .timer_sel = LEDC_TIMER_0,
-            .gpio_num = bl,
-            .duty = 128,
-            .hpoint = 0,
-        };
-        ledc_channel_config(&ledc_channel);
-    }
+    ledc_channel_config_t ledc_channel = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = LEDC_CHANNEL_1,
+        .timer_sel = LEDC_TIMER_3,
+        .gpio_num = LCD_BL_PIN,
+        .duty = 255,
+        .hpoint = 0,
+    };
+    ledc_channel_config(&ledc_channel);
 
-    ESP_LOGI(TAG, "LCD initialized successfully");
+    ESP_LOGI(TAG, "QSPI LCD initialized successfully");
     return ESP_OK;
 }
 
@@ -115,9 +166,9 @@ esp_err_t lcd_fill_rect(lcd_dev_t *dev, uint16_t x, uint16_t y,
     return ESP_OK;
 }
 
-esp_err_t lcd_set_brightness(lcd_dev_t *dev, uint8_t brightness)
+esp_err_t lcd_set_brightness(uint8_t brightness)
 {
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, brightness);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, brightness);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
     return ESP_OK;
 }
