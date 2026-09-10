@@ -44,6 +44,7 @@ static int gesture_idx = 0;
 static int64_t gesture_last_time = 0;
 
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
+static void flush_done_callback(void);
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data);
 
 static void event_btn_a(lv_event_t *e)
