@@ -2,10 +2,7 @@
 
 #include <stdint.h>
 #include "esp_err.h"
-#include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_io.h"
-#include "driver/spi_master.h"
-#include "driver/gpio.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,7 +10,7 @@ extern "C" {
 
 typedef struct {
     esp_lcd_panel_io_handle_t io_handle;
-    esp_lcd_panel_handle_t panel_handle;
+    void *panel_handle;
     uint16_t width;
     uint16_t height;
 } lcd_dev_t;
