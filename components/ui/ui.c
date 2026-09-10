@@ -44,7 +44,6 @@ static int gesture_idx = 0;
 static int64_t gesture_last_time = 0;
 
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
-static void flush_done_callback(void);
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data);
 
 static void event_btn_a(lv_event_t *e)
@@ -168,7 +167,6 @@ esp_err_t ui_init(void)
     g_ui.disp_drv.flush_cb = disp_flush_cb;
     g_ui.disp_drv.draw_buf = &g_ui.draw_buf;
     lv_disp_drv_register(&g_ui.disp_drv);
-    lcd_set_flush_done_cb(flush_done_callback);
 
     // Input device driver
     lv_indev_drv_init(&g_ui.indev_drv);
@@ -568,15 +566,11 @@ void ui_wake_from_imu(qmi8658_dev_t *imu)
 }
 
 // ===== LVGL Callbacks =====
-static void flush_done_callback(void)
-{
-    lv_disp_flush_ready(&g_ui.disp_drv);
-}
-
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p)
 {
     extern lcd_dev_t g_lcd;
     lcd_flush_area(&g_lcd, area->x1, area->y1, area->x2, area->y2, (const uint16_t *)color_p);
+    lv_disp_flush_ready(drv);
 }
 
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)

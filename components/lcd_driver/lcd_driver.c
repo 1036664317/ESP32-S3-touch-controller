@@ -24,14 +24,6 @@ static const char *TAG = "LCD";
 #define AXS_OPCODE_WRITE_COLOR 0x32
 
 static esp_lcd_panel_io_handle_t s_io_handle = NULL;
-static lcd_flush_done_cb_t s_flush_done_cb = NULL;
-
-static void on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
-{
-    if (s_flush_done_cb) {
-        s_flush_done_cb();
-    }
-}
 
 static void lcd_reset(void)
 {
@@ -131,7 +123,6 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     io_config.trans_queue_depth = 10;
     io_config.lcd_cmd_bits = 32;
     io_config.lcd_param_bits = 8;
-    io_config.on_color_trans_done = on_color_trans_done;
     io_config.flags.quad_mode = true;
 
     ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle);
@@ -197,9 +188,4 @@ esp_err_t lcd_set_brightness(uint8_t brightness)
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, brightness);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
     return ESP_OK;
-}
-
-void lcd_set_flush_done_cb(lcd_flush_done_cb_t cb)
-{
-    s_flush_done_cb = cb;
 }
