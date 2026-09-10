@@ -1,6 +1,5 @@
 #include "lcd_driver.h"
 #include "driver/ledc.h"
-#include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -21,6 +20,11 @@ static const char *TAG = "LCD";
 #define LCD_HOST        SPI3_HOST
 
 #define LCD_PCLK_HZ     (40 * 1000 * 1000)
+
+static void lcd_send_cmd(esp_lcd_panel_io_handle_t io, uint32_t cmd, const uint8_t *data, int len)
+{
+    esp_lcd_panel_io_tx_param(io, cmd, data, len);
+}
 
 static void lcd_reset(void)
 {
@@ -77,51 +81,17 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     }
     dev->io_handle = io_handle;
 
-    // AXS15231B vendor config for QSPI
-    typedef struct {
-        struct {
-            uint32_t use_qspi_interface: 1;
-        } flags;
-        const void *init_cmds;
-        uint16_t init_cmds_size;
-    } axs15231b_vendor_config_t;
-
-    // Minimal init commands: Sleep Out + Display On
-    typedef struct {
-        uint8_t cmd;
-        const uint8_t *data;
-        uint8_t data_len;
-        uint16_t delay_ms;
-    } lcd_init_cmd_t;
-
-    static const lcd_init_cmd_t init_cmds[] = {
-        {0x11, (uint8_t []){0x00}, 0, 100},  // Sleep Out
-        {0x29, (uint8_t []){0x00}, 0, 100},  // Display On
-    };
-
-    axs15231b_vendor_config_t vendor_config = {0};
-    vendor_config.flags.use_qspi_interface = 1;
-    vendor_config.init_cmds = init_cmds;
-    vendor_config.init_cmds_size = 2;
-
-    // Panel handle
+    // Use ST7789 panel driver (AXS15231B is command-compatible)
     esp_lcd_panel_handle_t panel_handle = NULL;
     esp_lcd_panel_dev_config_t panel_config = {0};
     panel_config.reset_gpio_num = -1;  // RST handled manually
     panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB;
     panel_config.bits_per_pixel = 16;
-    panel_config.vendor_config = &vendor_config;
 
-    ret = esp_lcd_new_panel_axs15231b(io_handle, &panel_config, &panel_handle);
+    ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "LCD panel init failed: %s, trying ST7789 fallback", esp_err_to_name(ret));
-        // Fallback to ST7789 if axs15231b not available
-        panel_config.vendor_config = NULL;
-        ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "LCD panel fallback also failed: %s", esp_err_to_name(ret));
-            return ret;
-        }
+        ESP_LOGE(TAG, "LCD panel init failed: %s", esp_err_to_name(ret));
+        return ret;
     }
     dev->panel_handle = panel_handle;
 
@@ -130,6 +100,13 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     esp_lcd_panel_set_gap(panel_handle, 0, 0);
     esp_lcd_panel_invert_color(panel_handle, true);
     esp_lcd_panel_mirror(panel_handle, false, false);
+
+    // Send AXS15231B specific QSPI init commands via IO handle
+    uint8_t zero = 0x00;
+    lcd_send_cmd(io_handle, 0x11, &zero, 0);  // Sleep Out
+    vTaskDelay(pdMS_TO_TICKS(120));
+    lcd_send_cmd(io_handle, 0x29, &zero, 0);  // Display ON
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     // Turn on backlight
     ledc_timer_config_t ledc_timer = {
