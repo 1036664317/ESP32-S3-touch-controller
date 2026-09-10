@@ -5,7 +5,6 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "lvgl.h"
 #include <string.h>
 
 static const char *TAG = "LCD";
@@ -25,12 +24,12 @@ static const char *TAG = "LCD";
 #define AXS_OPCODE_WRITE_COLOR 0x32
 
 static esp_lcd_panel_io_handle_t s_io_handle = NULL;
-static lv_disp_drv_t *s_disp_drv = NULL;
+static lcd_flush_done_cb_t s_flush_done_cb = NULL;
 
 static void on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
 {
-    if (s_disp_drv) {
-        lv_disp_flush_ready(s_disp_drv);
+    if (s_flush_done_cb) {
+        s_flush_done_cb();
     }
 }
 
@@ -200,7 +199,7 @@ esp_err_t lcd_set_brightness(uint8_t brightness)
     return ESP_OK;
 }
 
-void lcd_set_disp_drv(lv_disp_drv_t *drv)
+void lcd_set_flush_done_cb(lcd_flush_done_cb_t cb)
 {
-    s_disp_drv = drv;
+    s_flush_done_cb = cb;
 }

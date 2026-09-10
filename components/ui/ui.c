@@ -168,7 +168,7 @@ esp_err_t ui_init(void)
     g_ui.disp_drv.draw_buf = &g_ui.draw_buf;
     g_ui.disp_drv.full_refresh = 1;
     lv_disp_drv_register(&g_ui.disp_drv);
-    lcd_set_disp_drv(&g_ui.disp_drv);
+    lcd_set_flush_done_cb(flush_done_callback);
 
     // Input device driver
     lv_indev_drv_init(&g_ui.indev_drv);
@@ -568,6 +568,11 @@ void ui_wake_from_imu(qmi8658_dev_t *imu)
 }
 
 // ===== LVGL Callbacks =====
+static void flush_done_callback(void)
+{
+    lv_disp_flush_ready(&g_ui.disp_drv);
+}
+
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p)
 {
     extern lcd_dev_t g_lcd;
