@@ -5,7 +5,6 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
 #include <string.h>
 
 static const char *TAG = "LCD";
@@ -25,12 +24,12 @@ static const char *TAG = "LCD";
 #define AXS_OPCODE_WRITE_COLOR 0x32
 
 static esp_lcd_panel_io_handle_t s_io_handle = NULL;
-static SemaphoreHandle_t s_flush_sem = NULL;
+static lv_disp_drv_t *s_disp_drv = NULL;
 
 static void on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
 {
-    if (s_flush_sem) {
-        xSemaphoreGiveFromISR(s_flush_sem, NULL);
+    if (s_disp_drv) {
+        lv_disp_flush_ready(s_disp_drv);
     }
 }
 
@@ -104,8 +103,6 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     dev->width = width;
     dev->height = height;
     dev->io_handle = NULL;
-
-    s_flush_sem = xSemaphoreCreateBinary();
 
     ESP_LOGI(TAG, "Initializing QSPI LCD %dx%d", width, height);
 
@@ -192,10 +189,6 @@ esp_err_t lcd_flush_area(lcd_dev_t *dev, uint16_t x1, uint16_t y1,
     size_t len = (x2 - x1 + 1) * (y2 - y1 + 1) * sizeof(uint16_t);
     tx_color(0x2C, color_p, len);
 
-    if (s_flush_sem) {
-        xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(500));
-    }
-
     return ESP_OK;
 }
 
@@ -204,4 +197,9 @@ esp_err_t lcd_set_brightness(uint8_t brightness)
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, brightness);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
     return ESP_OK;
+}
+
+void lcd_set_disp_drv(lv_disp_drv_t *drv)
+{
+    s_disp_drv = drv;
 }

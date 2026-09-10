@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "esp_lcd_panel_io.h"
+#include "lvgl.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,6 +22,7 @@ esp_err_t lcd_fill_rect(lcd_dev_t *dev, uint16_t x, uint16_t y,
 esp_err_t lcd_flush_area(lcd_dev_t *dev, uint16_t x1, uint16_t y1,
                           uint16_t x2, uint16_t y2, const uint16_t *color_p);
 esp_err_t lcd_set_brightness(uint8_t brightness);
+void lcd_set_disp_drv(lv_disp_drv_t *drv);
 
 #ifdef __cplusplus
 }
