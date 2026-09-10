@@ -55,7 +55,7 @@ typedef struct {
     unsigned int delay_ms;
 } lcd_init_cmd_t;
 
-static const lcd_init_cmd_t axs_init_cmds[] = {
+static const lcd_init_cmd_t vendor_specific_init_default[] = {
     {0xBB, (uint8_t[]){0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5A, 0xA5}, 8, 0},
     {0xA0, (uint8_t[]){0x00, 0x10, 0x00, 0x02, 0x00, 0x00, 0x64, 0x3F, 0x20, 0x05, 0x3F, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00}, 17, 0},
     {0xA2, (uint8_t[]){0x30, 0x04, 0x0A, 0x3C, 0xEC, 0x54, 0xC4, 0x30, 0xAC, 0x28, 0x7F, 0x7F, 0x7F, 0x20, 0xF8, 0x10, 0x02, 0xFF, 0xFF, 0xF0, 0x90, 0x01, 0x32, 0xA0, 0x91, 0xC0, 0x20, 0x7F, 0xFF, 0x00, 0x54}, 31, 0},
@@ -133,11 +133,24 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     dev->io_handle = io_handle;
     s_io_handle = io_handle;
 
-    int num_cmds = sizeof(axs_init_cmds) / sizeof(axs_init_cmds[0]);
+    // Step 1: Sleep out
+    tx_cmd(0x11, NULL, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Step 2: MADCTL - Memory Data Access Control (0x00 = RGB order)
+    uint8_t madctl = 0x00;
+    tx_cmd(0x36, &madctl, 1);
+
+    // Step 3: COLMOD - Interface Pixel Format (0x55 = RGB565)
+    uint8_t colmod = 0x55;
+    tx_cmd(0x3A, &colmod, 1);
+
+    // Step 4: Vendor-specific initialization commands
+    int num_cmds = sizeof(vendor_specific_init_default) / sizeof(vendor_specific_init_default[0]);
     for (int i = 0; i < num_cmds; i++) {
-        tx_cmd(axs_init_cmds[i].cmd, axs_init_cmds[i].data, axs_init_cmds[i].data_bytes);
-        if (axs_init_cmds[i].delay_ms > 0) {
-            vTaskDelay(pdMS_TO_TICKS(axs_init_cmds[i].delay_ms));
+        tx_cmd(vendor_specific_init_default[i].cmd, vendor_specific_init_default[i].data, vendor_specific_init_default[i].data_bytes);
+        if (vendor_specific_init_default[i].delay_ms > 0) {
+            vTaskDelay(pdMS_TO_TICKS(vendor_specific_init_default[i].delay_ms));
         }
     }
 
@@ -172,13 +185,16 @@ esp_err_t lcd_flush_area(lcd_dev_t *dev, uint16_t x1, uint16_t y1,
     if (!dev->io_handle) return ESP_ERR_INVALID_STATE;
 
     uint8_t caset[4] = {x1 >> 8, x1 & 0xFF, x2 >> 8, x2 & 0xFF};
-    uint8_t raset[4] = {y1 >> 8, y1 & 0xFF, y2 >> 8, y2 & 0xFF};
-
     tx_cmd(0x2A, caset, 4);
-    tx_cmd(0x2B, raset, 4);
 
+    // In QSPI mode, AXS15231B uses auto-incrementing Y counter - skip RASET
+    // Use RAMWR (0x2C) for y_start==0, RAMWRC (0x3C) otherwise
     size_t len = (x2 - x1 + 1) * (y2 - y1 + 1) * sizeof(uint16_t);
-    tx_color(0x2C, color_p, len);
+    if (y1 == 0) {
+        tx_color(0x2C, color_p, len);
+    } else {
+        tx_color(0x3C, color_p, len);
+    }
 
     return ESP_OK;
 }
