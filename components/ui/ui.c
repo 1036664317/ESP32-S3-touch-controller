@@ -569,6 +569,8 @@ void ui_wake_from_imu(qmi8658_dev_t *imu)
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p)
 {
     extern lcd_dev_t g_lcd;
+    ESP_LOGD("UI", "flush_cb: area=(%d,%d)-(%d,%d) buf=%p",
+             area->x1, area->y1, area->x2, area->y2, color_p);
     lcd_flush_area(&g_lcd, area->x1, area->y1, area->x2, area->y2, (const uint16_t *)color_p);
     lv_disp_flush_ready(drv);
 }

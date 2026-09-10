@@ -109,6 +109,16 @@ void app_main(void)
         return;
     }
 
+    // === TEST: Fill screen with solid red BEFORE LVGL init ===
+    ESP_LOGI(TAG, "TEST: Filling screen with red...");
+    lcd_fill_screen(&g_lcd, 0xF800);  // RGB565 red
+    ESP_LOGI(TAG, "TEST: Red fill done. Waiting 5 seconds...");
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    ESP_LOGI(TAG, "TEST: Now filling screen with green...");
+    lcd_fill_screen(&g_lcd, 0x07E0);  // RGB565 green
+    ESP_LOGI(TAG, "TEST: Green fill done. Waiting 5 seconds...");
+    vTaskDelay(pdMS_TO_TICKS(5000));
+
     // Initialize touch (I2C1 on GPIO17/18)
     ESP_LOGI(TAG, "Initializing touch...");
     ret = axs15231b_init(&g_touch, I2C_NUM_1, AXS15231B_I2C_ADDR);

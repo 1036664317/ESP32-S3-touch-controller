@@ -3,8 +3,10 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include <string.h>
 
 static const char *TAG = "LCD";
@@ -24,6 +26,14 @@ static const char *TAG = "LCD";
 #define AXS_OPCODE_WRITE_COLOR 0x32
 
 static esp_lcd_panel_io_handle_t s_io_handle = NULL;
+static SemaphoreHandle_t s_flush_sem = NULL;
+
+static void on_color_trans_done(esp_lcd_panel_io_handle_t io, void *data, void *ctx)
+{
+    if (s_flush_sem) {
+        xSemaphoreGiveFromISR(s_flush_sem, NULL);
+    }
+}
 
 static void lcd_reset(void)
 {
@@ -39,12 +49,20 @@ static void lcd_reset(void)
 static esp_err_t tx_cmd(int cmd, const void *param, size_t param_size)
 {
     int qspi_cmd = (AXS_OPCODE_WRITE_CMD << 24) | ((cmd & 0xFF) << 8);
+    ESP_LOGD(TAG, "tx_cmd: cmd=0x%02X qspi=0x%08X param_size=%d", cmd, qspi_cmd, (int)param_size);
+    if (param_size > 0 && param_size <= 8) {
+        const uint8_t *p = (const uint8_t *)param;
+        ESP_LOGD(TAG, "  param: %02X %02X %02X %02X %02X %02X %02X %02X",
+                 p[0], param_size > 1 ? p[1] : 0, param_size > 2 ? p[2] : 0, param_size > 3 ? p[3] : 0,
+                 param_size > 4 ? p[4] : 0, param_size > 5 ? p[5] : 0, param_size > 6 ? p[6] : 0, param_size > 7 ? p[7] : 0);
+    }
     return esp_lcd_panel_io_tx_param(s_io_handle, qspi_cmd, param, param_size);
 }
 
 static esp_err_t tx_color(int cmd, const void *param, size_t param_size)
 {
     int qspi_cmd = (AXS_OPCODE_WRITE_COLOR << 24) | ((cmd & 0xFF) << 8);
+    ESP_LOGD(TAG, "tx_color: cmd=0x%02X qspi=0x%08X len=%d", cmd, qspi_cmd, (int)param_size);
     return esp_lcd_panel_io_tx_color(s_io_handle, qspi_cmd, param, param_size);
 }
 
@@ -123,7 +141,13 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     io_config.trans_queue_depth = 10;
     io_config.lcd_cmd_bits = 32;
     io_config.lcd_param_bits = 8;
+    io_config.on_color_trans_done = on_color_trans_done;
+    io_config.user_ctx = NULL;
     io_config.flags.quad_mode = true;
+
+    if (!s_flush_sem) {
+        s_flush_sem = xSemaphoreCreateBinary();
+    }
 
     ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle);
     if (ret != ESP_OK) {
@@ -184,18 +208,68 @@ esp_err_t lcd_flush_area(lcd_dev_t *dev, uint16_t x1, uint16_t y1,
 {
     if (!dev->io_handle) return ESP_ERR_INVALID_STATE;
 
+    uint16_t w = x2 - x1 + 1;
+    uint16_t h = y2 - y1 + 1;
+    size_t len = w * h * sizeof(uint16_t);
+    ESP_LOGD(TAG, "flush_area: (%d,%d)-(%d,%d) %dx%d len=%d y1=%d",
+             x1, y1, x2, y2, w, h, (int)len, y1);
+
     uint8_t caset[4] = {x1 >> 8, x1 & 0xFF, x2 >> 8, x2 & 0xFF};
     tx_cmd(0x2A, caset, 4);
 
     // In QSPI mode, AXS15231B uses auto-incrementing Y counter - skip RASET
     // Use RAMWR (0x2C) for y_start==0, RAMWRC (0x3C) otherwise
-    size_t len = (x2 - x1 + 1) * (y2 - y1 + 1) * sizeof(uint16_t);
     if (y1 == 0) {
         tx_color(0x2C, color_p, len);
     } else {
         tx_color(0x3C, color_p, len);
     }
 
+    // Wait for DMA to complete before returning
+    if (s_flush_sem) {
+        if (xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(500)) != pdTRUE) {
+            ESP_LOGW(TAG, "flush DMA timeout!");
+        }
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t lcd_fill_screen(lcd_dev_t *dev, uint16_t color)
+{
+    if (!dev->io_handle) return ESP_ERR_INVALID_STATE;
+
+    ESP_LOGI(TAG, "Filling screen with color 0x%04X", color);
+
+    // Set CASET to full width
+    uint8_t caset[4] = {0x00, 0x00, (dev->width - 1) >> 8, (dev->width - 1) & 0xFF};
+    tx_cmd(0x2A, caset, 4);
+
+    // Allocate a line buffer and fill row by row
+    uint16_t *line = heap_caps_malloc(dev->width * sizeof(uint16_t), MALLOC_CAP_DMA);
+    if (!line) {
+        ESP_LOGE(TAG, "Failed to allocate line buffer for test");
+        return ESP_ERR_NO_MEM;
+    }
+    for (int i = 0; i < dev->width; i++) {
+        line[i] = color;
+    }
+
+    ESP_LOGI(TAG, "Writing %d rows...", dev->height);
+    for (int y = 0; y < dev->height; y++) {
+        // RAMWR for y==0, RAMWRC otherwise
+        if (y == 0) {
+            tx_color(0x2C, line, dev->width * sizeof(uint16_t));
+        } else {
+            tx_color(0x3C, line, dev->width * sizeof(uint16_t));
+        }
+        // Wait for each row DMA to complete
+        if (s_flush_sem) {
+            xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(500));
+        }
+    }
+    free(line);
+    ESP_LOGI(TAG, "Screen fill complete");
     return ESP_OK;
 }
 
