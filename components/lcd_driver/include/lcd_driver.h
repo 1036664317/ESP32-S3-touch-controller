@@ -18,6 +18,8 @@ typedef struct {
 esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height);
 esp_err_t lcd_fill_rect(lcd_dev_t *dev, uint16_t x, uint16_t y,
                          uint16_t w, uint16_t h, uint16_t color);
+esp_err_t lcd_flush_area(lcd_dev_t *dev, uint16_t x1, uint16_t y1,
+                          uint16_t x2, uint16_t y2, const uint16_t *color_p);
 esp_err_t lcd_set_brightness(uint8_t brightness);
 
 #ifdef __cplusplus

@@ -547,7 +547,7 @@ void ui_check_sleep(qmi8658_dev_t *imu)
             g_ui.sleeping = true;
             ESP_LOGI(TAG, "Entering sleep mode");
             extern lcd_dev_t g_lcd;
-            lcd_set_brightness(&g_lcd, 0);
+            lcd_set_brightness(0);
         }
     }
 }
@@ -562,7 +562,7 @@ void ui_wake_from_imu(qmi8658_dev_t *imu)
         g_ui.last_activity_time = esp_timer_get_time();
         ESP_LOGI(TAG, "Waking up from IMU");
         extern lcd_dev_t g_lcd;
-        lcd_set_brightness(&g_lcd, 128);
+        lcd_set_brightness(128);
     }
 }
 
@@ -570,7 +570,7 @@ void ui_wake_from_imu(qmi8658_dev_t *imu)
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p)
 {
     extern lcd_dev_t g_lcd;
-    esp_lcd_panel_draw_bitmap(g_lcd.panel_handle, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_p);
+    lcd_flush_area(&g_lcd, area->x1, area->y1, area->x2, area->y2, (const uint16_t *)color_p);
     lv_disp_flush_ready(drv);
 }
 

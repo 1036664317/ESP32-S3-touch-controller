@@ -109,22 +109,34 @@ esp_err_t lcd_fill_rect(lcd_dev_t *dev, uint16_t x, uint16_t y,
 {
     if (!dev->io_handle) return ESP_ERR_INVALID_STATE;
 
-    // Set window via QSPI commands
     uint8_t caset[4] = {x >> 8, x & 0xFF, (x + w - 1) >> 8, (x + w - 1) & 0xFF};
     uint8_t raset[4] = {y >> 8, y & 0xFF, (y + h - 1) >> 8, (y + h - 1) & 0xFF};
-    uint8_t ramwr = 0x2C;
 
     esp_lcd_panel_io_tx_param(dev->io_handle, 0x2A, caset, 4);
     esp_lcd_panel_io_tx_param(dev->io_handle, 0x2B, raset, 4);
 
-    // Fill buffer and send
     uint16_t *buf = heap_caps_malloc(w * h * sizeof(uint16_t), MALLOC_CAP_DMA);
     if (!buf) return ESP_ERR_NO_MEM;
     for (int i = 0; i < w * h; i++) buf[i] = color;
 
-    esp_lcd_panel_io_tx_color(dev->io_handle, ramwr, buf, w * h * sizeof(uint16_t));
+    esp_lcd_panel_io_tx_color(dev->io_handle, 0x2C, buf, w * h * sizeof(uint16_t));
     heap_caps_free(buf);
     return ESP_OK;
+}
+
+esp_err_t lcd_flush_area(lcd_dev_t *dev, uint16_t x1, uint16_t y1,
+                          uint16_t x2, uint16_t y2, const uint16_t *color_p)
+{
+    if (!dev->io_handle) return ESP_ERR_INVALID_STATE;
+
+    uint8_t caset[4] = {x1 >> 8, x1 & 0xFF, x2 >> 8, x2 & 0xFF};
+    uint8_t raset[4] = {y1 >> 8, y1 & 0xFF, y2 >> 8, y2 & 0xFF};
+
+    esp_lcd_panel_io_tx_param(dev->io_handle, 0x2A, caset, 4);
+    esp_lcd_panel_io_tx_param(dev->io_handle, 0x2B, raset, 4);
+
+    size_t len = (x2 - x1 + 1) * (y2 - y1 + 1) * sizeof(uint16_t);
+    return esp_lcd_panel_io_tx_color(dev->io_handle, 0x2C, color_p, len);
 }
 
 esp_err_t lcd_set_brightness(uint8_t brightness)
