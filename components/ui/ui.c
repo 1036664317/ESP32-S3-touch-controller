@@ -152,14 +152,13 @@ esp_err_t ui_init(void)
     // Init LVGL
     lv_init();
 
-    // Allocate draw buffers
-    g_ui.buf1 = heap_caps_malloc(LCD_WIDTH * 40 * sizeof(lv_color_t), MALLOC_CAP_DMA);
-    g_ui.buf2 = heap_caps_malloc(LCD_WIDTH * 40 * sizeof(lv_color_t), MALLOC_CAP_DMA);
-    if (!g_ui.buf1 || !g_ui.buf2) {
-        ESP_LOGE(TAG, "Failed to allocate LVGL buffers");
+    // Allocate draw buffers (full screen in PSRAM for full_refresh mode)
+    g_ui.buf1 = heap_caps_malloc(LCD_WIDTH * LCD_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    if (!g_ui.buf1) {
+        ESP_LOGE(TAG, "Failed to allocate LVGL buffer in PSRAM");
         return ESP_ERR_NO_MEM;
     }
-    lv_disp_draw_buf_init(&g_ui.draw_buf, g_ui.buf1, g_ui.buf2, LCD_WIDTH * 40);
+    lv_disp_draw_buf_init(&g_ui.draw_buf, g_ui.buf1, NULL, LCD_WIDTH * LCD_HEIGHT);
 
     // Display driver
     lv_disp_drv_init(&g_ui.disp_drv);
@@ -167,6 +166,7 @@ esp_err_t ui_init(void)
     g_ui.disp_drv.ver_res = LCD_HEIGHT;
     g_ui.disp_drv.flush_cb = disp_flush_cb;
     g_ui.disp_drv.draw_buf = &g_ui.draw_buf;
+    g_ui.disp_drv.full_refresh = 1;
     lv_disp_drv_register(&g_ui.disp_drv);
 
     // Input device driver

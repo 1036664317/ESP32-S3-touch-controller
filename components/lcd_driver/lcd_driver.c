@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include <string.h>
 
 static const char *TAG = "LCD";
@@ -20,11 +21,18 @@ static const char *TAG = "LCD";
 #define LCD_HOST        SPI3_HOST
 #define LCD_PCLK_HZ     (40 * 1000 * 1000)
 
-// AXS15231B QSPI opcodes
 #define AXS_OPCODE_WRITE_CMD   0x02
 #define AXS_OPCODE_WRITE_COLOR 0x32
 
 static esp_lcd_panel_io_handle_t s_io_handle = NULL;
+static SemaphoreHandle_t s_flush_sem = NULL;
+
+static void on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
+{
+    if (s_flush_sem) {
+        xSemaphoreGiveFromISR(s_flush_sem, NULL);
+    }
+}
 
 static void lcd_reset(void)
 {
@@ -97,6 +105,8 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     dev->height = height;
     dev->io_handle = NULL;
 
+    s_flush_sem = xSemaphoreCreateBinary();
+
     ESP_LOGI(TAG, "Initializing QSPI LCD %dx%d", width, height);
 
     lcd_reset();
@@ -124,6 +134,7 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     io_config.trans_queue_depth = 10;
     io_config.lcd_cmd_bits = 32;
     io_config.lcd_param_bits = 8;
+    io_config.on_color_trans_done = on_color_trans_done;
     io_config.flags.quad_mode = true;
 
     ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle);
@@ -134,7 +145,6 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     dev->io_handle = io_handle;
     s_io_handle = io_handle;
 
-    // Send AXS15231B vendor init sequence
     int num_cmds = sizeof(axs_init_cmds) / sizeof(axs_init_cmds[0]);
     for (int i = 0; i < num_cmds; i++) {
         tx_cmd(axs_init_cmds[i].cmd, axs_init_cmds[i].data, axs_init_cmds[i].data_bytes);
@@ -145,7 +155,6 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
 
     ESP_LOGI(TAG, "AXS15231B QSPI init complete");
 
-    // Backlight
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_TIMER_8_BIT,
@@ -181,12 +190,10 @@ esp_err_t lcd_flush_area(lcd_dev_t *dev, uint16_t x1, uint16_t y1,
     tx_cmd(0x2B, raset, 4);
 
     size_t len = (x2 - x1 + 1) * (y2 - y1 + 1) * sizeof(uint16_t);
+    tx_color(0x2C, color_p, len);
 
-    // QSPI RAMWR (0x2C) for y==0, RAMWRC (0x2C) otherwise
-    if (y1 == 0) {
-        tx_color(0x2C, color_p, len);
-    } else {
-        tx_color(0x2C, color_p, len);
+    if (s_flush_sem) {
+        xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(500));
     }
 
     return ESP_OK;
