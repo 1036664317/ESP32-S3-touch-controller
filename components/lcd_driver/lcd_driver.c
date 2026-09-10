@@ -20,7 +20,7 @@ static const char *TAG = "LCD";
 #define LCD_RST_PIN     21
 #define LCD_BL_PIN      8
 #define LCD_HOST        SPI3_HOST
-#define LCD_PCLK_HZ     (40 * 1000 * 1000)
+#define LCD_PCLK_HZ     (10 * 1000 * 1000)
 
 #define AXS_OPCODE_WRITE_CMD   0x02
 #define AXS_OPCODE_WRITE_COLOR 0x32
