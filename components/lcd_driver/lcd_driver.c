@@ -1,6 +1,8 @@
 #include "lcd_driver.h"
 #include "driver/ledc.h"
 #include "esp_lcd_panel_ops.h"
+#include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_panel_dev.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
