@@ -114,7 +114,7 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     buscfg.sclk_io_num = LCD_PCLK_PIN;
     buscfg.data2_io_num = LCD_D2_PIN;
     buscfg.data3_io_num = LCD_D3_PIN;
-    buscfg.max_transfer_sz = width * height * sizeof(uint16_t);
+    buscfg.max_transfer_sz = width * 40 * sizeof(uint16_t);
 
     esp_err_t ret = spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK) {
