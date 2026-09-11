@@ -66,6 +66,14 @@ static void event_btn_menu(lv_event_t *e)
 {
     g_ui.button_menu = true;
     ESP_LOGI(TAG, "Menu button pressed");
+
+    // Cycle modes: Joystick -> AirMouse -> Scroll -> Joystick
+    ui_mode_t next_mode = (ui_mode_t)((g_ui.mode + 1) % 3);
+    ui_set_mode(next_mode);
+    if (next_mode == MODE_AIR_MOUSE) {
+        g_ui.pitch_offset = g_ui.pitch;
+        g_ui.yaw_offset = g_ui.yaw;
+    }
 }
 
 static void event_joystick_zone(lv_event_t *e)

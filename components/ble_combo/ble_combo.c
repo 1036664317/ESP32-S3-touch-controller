@@ -23,6 +23,7 @@ static ble_combo_state_t state = {
 static uint16_t gamepad_char_handle;
 static uint16_t mouse_char_handle;
 static uint16_t media_char_handle;
+static void advertise(void);
 
 // HID Report Descriptors (reserved for future GATT report map integration)
 #pragma GCC diagnostic push
@@ -64,16 +65,12 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             state.connected = true;
-            ESP_LOGI(TAG, "Connected");
+            state.advertising = false;
+            ESP_LOGI(TAG, "Connected successfully");
             if (on_connected_cb) on_connected_cb(cb_ctx);
         } else {
             ESP_LOGE(TAG, "Connection failed, restarting advertising");
-            struct ble_gap_adv_params adv_params = {0};
-            adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
-            adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-            adv_params.itvl_min = 0x20;
-            adv_params.itvl_max = 0x40;
-            ble_gap_adv_start(0, NULL, BLE_HS_FOREVER, &adv_params, gap_event_cb, NULL);
+            advertise();
         }
         break;
     case BLE_GAP_EVENT_DISCONNECT:
@@ -81,12 +78,7 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         state.advertising = false;
         ESP_LOGI(TAG, "Disconnected, restarting advertising");
         if (on_disconnected_cb) on_disconnected_cb(cb_ctx);
-        struct ble_gap_adv_params adv_params2 = {0};
-        adv_params2.conn_mode = BLE_GAP_CONN_MODE_UND;
-        adv_params2.disc_mode = BLE_GAP_DISC_MODE_GEN;
-        adv_params2.itvl_min = 0x20;
-        adv_params2.itvl_max = 0x40;
-        ble_gap_adv_start(0, NULL, BLE_HS_FOREVER, &adv_params2, gap_event_cb, NULL);
+        advertise();
         break;
     case BLE_GAP_EVENT_SUBSCRIBE:
         ESP_LOGI(TAG, "Subscribe: conn=%d attr=%d",
@@ -98,6 +90,31 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
 
 static void advertise(void)
 {
+    struct ble_hs_adv_fields fields = {0};
+    const char *device_name = "ESP32-S3 VR Controller";
+
+    ble_svc_gap_device_name_set(device_name);
+
+    fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    fields.name = (uint8_t *)device_name;
+    fields.name_len = strlen(device_name);
+    fields.name_is_complete = 1;
+
+    // Appearance: 0x03C4 (Gamepad)
+    fields.appearance = 0x03C4;
+    fields.appearance_is_present = 1;
+
+    // HID Service UUID 0x1812
+    static const ble_uuid16_t hid_uuid = BLE_UUID16_INIT(0x1812);
+    fields.uuids16 = (ble_uuid16_t *)&hid_uuid;
+    fields.num_uuids16 = 1;
+    fields.uuids16_is_complete = 1;
+
+    int rc = ble_gap_adv_set_fields(&fields);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "Failed to set adv fields: %d", rc);
+    }
+
     struct ble_gap_adv_params adv_params = {0};
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
@@ -105,9 +122,13 @@ static void advertise(void)
     adv_params.itvl_max = 0x40;
     adv_params.channel_map = 0x07;  // BLE_GAP_CHNL_MAP_ALL
 
-    ble_gap_adv_start(0, NULL, BLE_HS_FOREVER, &adv_params, gap_event_cb, NULL);
-    state.advertising = true;
-    ESP_LOGI(TAG, "Advertising started");
+    rc = ble_gap_adv_start(0, NULL, BLE_HS_FOREVER, &adv_params, gap_event_cb, NULL);
+    if (rc == 0) {
+        state.advertising = true;
+        ESP_LOGI(TAG, "Advertising started as '%s'", device_name);
+    } else {
+        ESP_LOGE(TAG, "Failed to start adv: %d", rc);
+    }
 }
 
 static int gatt_svr_write_cb(uint16_t conn_handle, uint16_t attr_handle,
