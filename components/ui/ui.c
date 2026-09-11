@@ -149,9 +149,23 @@ static void event_scroll_zone(lv_event_t *e)
     }
 }
 
+static void lv_tick_timer_cb(void *arg)
+{
+    lv_tick_inc(5);
+}
+
 esp_err_t ui_init(void)
 {
     ESP_LOGI(TAG, "Initializing UI");
+
+    // Start LVGL tick timer (5ms)
+    const esp_timer_create_args_t tick_timer_args = {
+        .callback = lv_tick_timer_cb,
+        .name = "lv_tick",
+    };
+    esp_timer_handle_t tick_timer = NULL;
+    esp_timer_create(&tick_timer_args, &tick_timer);
+    esp_timer_start_periodic(tick_timer, 5000);
 
     // Init LVGL
     lv_init();
@@ -626,11 +640,12 @@ static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
     if (axs15231b_read_touch(&g_touch, &tdata) == ESP_OK && tdata.pressed) {
         data->state = LV_INDEV_STATE_PRESSED;
 
-        // Convert physical touch coordinates (0~171, 0~639) to rotated UI coordinates (0~639, 0~171):
-        // phys_x = 171 - ui_y  => ui_y = 171 - phys_x
-        // phys_y = ui_x        => ui_x = phys_y
-        int ui_x = tdata.y;
-        int ui_y = LCD_HEIGHT - 1 - tdata.x;
+        // AXS15231B touch controller raw output:
+        // pointX: 0 ~ 640 (horizontal length)
+        // pointY: 0 ~ 172 (vertical width)
+        // Official Waveshare rotation 90 deg formula:
+        int ui_x = LCD_WIDTH - (int)tdata.x;
+        int ui_y = LCD_HEIGHT - (int)tdata.y;
 
         if (ui_x < 0) ui_x = 0;
         if (ui_x >= LCD_WIDTH) ui_x = LCD_WIDTH - 1;
@@ -639,5 +654,14 @@ static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
 
         data->point.x = ui_x;
         data->point.y = ui_y;
+
+        g_ui.last_activity_time = esp_timer_get_time();
+        if (g_ui.sleeping) {
+            g_ui.sleeping = false;
+            extern lcd_dev_t g_lcd;
+            lcd_set_brightness(255);
+        }
+
+        ESP_LOGI("TOUCH", "Raw(%d,%d) -> UI(%d,%d)", tdata.x, tdata.y, ui_x, ui_y);
     }
 }

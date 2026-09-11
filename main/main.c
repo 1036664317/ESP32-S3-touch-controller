@@ -68,11 +68,7 @@ static void ui_task(void *arg)
     TickType_t last_wake = xTaskGetTickCount();
 
     while (1) {
-        if (g_touch_ok) {
-            ui_process_touch(&g_touch);
-        }
-
-        // Update LVGL
+        // Update LVGL (automatically polls touch_read_cb)
         ui_update();
 
         // Send BLE reports

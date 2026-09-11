@@ -33,7 +33,7 @@ esp_err_t axs15231b_init(axs15231b_dev_t *dev, i2c_port_t port, uint8_t addr)
     ret = i2c_master_bus_add_device(bus_handle, &((i2c_device_config_t){
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = addr,
-        .scl_speed_hz = 400000,
+        .scl_speed_hz = 300000,
     }), &touch_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add device: %s", esp_err_to_name(ret));
