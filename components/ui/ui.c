@@ -426,8 +426,12 @@ void ui_update_imu(mahony_state_t *mahony, qmi8658_dev_t *imu)
     qmi8658_data_t data;
     if (qmi8658_read_data(imu, &data) != ESP_OK) return;
 
+    // Convert gyro from dps to rad/s for Mahony quaternion update
+    const float dps_to_rad = 0.0174532925f; // M_PI / 180.0f
     mahony_update(mahony, data.accel.x, data.accel.y, data.accel.z,
-                  data.gyro.x, data.gyro.y, data.gyro.z);
+                  data.gyro.x * dps_to_rad,
+                  data.gyro.y * dps_to_rad,
+                  data.gyro.z * dps_to_rad);
 
     float pitch, yaw, roll;
     mahony_get_angles(mahony, &pitch, &yaw, &roll);

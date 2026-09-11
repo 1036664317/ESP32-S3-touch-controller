@@ -131,6 +131,7 @@ void app_main(void)
         ESP_LOGE(TAG, "IMU init failed: %s", esp_err_to_name(ret));
     } else {
         g_imu_ok = true;
+        qmi8658_calibrate(&g_imu, 50);
     }
 
     // Initialize Mahony filter

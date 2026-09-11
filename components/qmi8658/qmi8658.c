@@ -75,7 +75,7 @@ esp_err_t qmi8658_init(qmi8658_dev_t *dev, i2c_port_t port, uint8_t addr)
     ret = i2c_master_bus_add_device(bus_handle, &((i2c_device_config_t){
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = addr,
-        .scl_speed_hz = 400000,
+        .scl_speed_hz = 300000,
     }), &dev_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add device: %s", esp_err_to_name(ret));
@@ -101,11 +101,44 @@ esp_err_t qmi8658_init(qmi8658_dev_t *dev, i2c_port_t port, uint8_t addr)
     // Configure gyroscope: 250Hz ODR, +/-500dps range
     qmi8658_write_reg_with_data(dev, QMI8658_CTRL3, 0x95);  // ODR=250Hz, Range=500dps, enable
     dev->gyro_scale = 500.0f / 32768.0f;
+    dev->gyro_bias_x = 0.0f;
+    dev->gyro_bias_y = 0.0f;
+    dev->gyro_bias_z = 0.0f;
 
     // Enable both sensors
     qmi8658_write_reg_with_data(dev, QMI8658_CTRL7, 0x03);
 
     ESP_LOGI(TAG, "QMI8658 initialized successfully");
+    return ESP_OK;
+}
+
+esp_err_t qmi8658_calibrate(qmi8658_dev_t *dev, int samples)
+{
+    if (samples <= 0) samples = 100;
+    float sum_gx = 0, sum_gy = 0, sum_gz = 0;
+    int valid = 0;
+
+    for (int i = 0; i < samples; i++) {
+        uint8_t buf[12];
+        if (qmi8658_read_reg(dev, QMI8658_AX_L, buf, 12) == ESP_OK) {
+            int16_t raw_gx = (int16_t)(buf[7] << 8 | buf[6]);
+            int16_t raw_gy = (int16_t)(buf[9] << 8 | buf[8]);
+            int16_t raw_gz = (int16_t)(buf[11] << 8 | buf[10]);
+            sum_gx += raw_gx * dev->gyro_scale;
+            sum_gy += raw_gy * dev->gyro_scale;
+            sum_gz += raw_gz * dev->gyro_scale;
+            valid++;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+    if (valid > 0) {
+        dev->gyro_bias_x = sum_gx / valid;
+        dev->gyro_bias_y = sum_gy / valid;
+        dev->gyro_bias_z = sum_gz / valid;
+        ESP_LOGI(TAG, "Gyro calibrated (%d samples): bias=(%.2f, %.2f, %.2f) dps",
+                 valid, dev->gyro_bias_x, dev->gyro_bias_y, dev->gyro_bias_z);
+    }
     return ESP_OK;
 }
 
@@ -125,9 +158,9 @@ esp_err_t qmi8658_read_data(qmi8658_dev_t *dev, qmi8658_data_t *data)
     data->accel.x = raw_ax * dev->accel_scale;
     data->accel.y = raw_ay * dev->accel_scale;
     data->accel.z = raw_az * dev->accel_scale;
-    data->gyro.x = raw_gx * dev->gyro_scale;
-    data->gyro.y = raw_gy * dev->gyro_scale;
-    data->gyro.z = raw_gz * dev->gyro_scale;
+    data->gyro.x = (raw_gx * dev->gyro_scale) - dev->gyro_bias_x;
+    data->gyro.y = (raw_gy * dev->gyro_scale) - dev->gyro_bias_y;
+    data->gyro.z = (raw_gz * dev->gyro_scale) - dev->gyro_bias_z;
     data->timestamp_us = esp_timer_get_time();
 
     return ESP_OK;

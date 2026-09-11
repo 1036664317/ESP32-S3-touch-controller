@@ -18,6 +18,9 @@ typedef struct {
     float accel_scale;   // LSB to g
     float gyro_scale;    // LSB to dps
     float mag_scale;
+    float gyro_bias_x;   // dps offset
+    float gyro_bias_y;
+    float gyro_bias_z;
 } qmi8658_dev_t;
 
 typedef struct {
@@ -31,6 +34,7 @@ typedef struct {
 } qmi8658_data_t;
 
 esp_err_t qmi8658_init(qmi8658_dev_t *dev, i2c_port_t port, uint8_t addr);
+esp_err_t qmi8658_calibrate(qmi8658_dev_t *dev, int samples);
 esp_err_t qmi8658_read_data(qmi8658_dev_t *dev, qmi8658_data_t *data);
 esp_err_t qmi8658_read_all(qmi8658_dev_t *dev, qmi8658_data_t *data);
 bool qmi8658_is_stationary(qmi8658_dev_t *dev, float threshold, int duration_ms);
