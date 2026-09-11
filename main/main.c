@@ -52,9 +52,7 @@ static void imu_task(void *arg)
 
     while (1) {
         if (g_imu_ok) {
-            if (g_ui.air_mouse_active) {
-                ui_update_imu(&g_mahony, &g_imu);
-            }
+            ui_update_imu(&g_mahony, &g_imu);
             ui_detect_gesture(&g_imu);
             ui_check_sleep(&g_imu);
             ui_wake_from_imu(&g_imu);

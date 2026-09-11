@@ -804,26 +804,47 @@ void ui_update_imu(mahony_state_t *mahony, qmi8658_dev_t *imu)
 
     mahony_get_angles(mahony, &g_ui.pitch, &g_ui.yaw, &g_ui.roll);
 
-    // Touch-to-Aim Air Mouse:
-    // Only active when finger is on touchpad AND not performing a dedicated wheel scroll
-    if (g_ui.mode == MODE_TOUCHPAD_MOUSE && pad_touching && !pad_is_scrolling) {
-        float vx = -data.gyro.z; // Horizontal yaw rotation
-        float vy = data.gyro.x;  // Vertical pitch tilt (wrist down -> cursor down, wrist up -> cursor up)
-
-        float deadzone = 2.2f;   // Filter slight tremor
-        float sens = 0.6f;       // Smooth laser-pointer sensitivity
-
-        if (fabsf(vx) > deadzone) {
-            g_ui.mouse_x = (int16_t)(vx * sens);
-        } else {
+    // Air Mouse logic in Touchpad Mouse mode:
+    if (g_ui.mode == MODE_TOUCHPAD_MOUSE) {
+        // If user is explicitly swiping vertically on touchpad for wheel scrolling, pause air mouse
+        if (pad_is_scrolling) {
             g_ui.mouse_x = 0;
+            g_ui.mouse_y = 0;
+            return;
         }
 
-        if (fabsf(vy) > deadzone) {
-            g_ui.mouse_y = (int16_t)(vy * sens);
-        } else {
-            g_ui.mouse_y = 0;
+        // Horizontal rotation (Yaw) -> Gyro Z
+        // Vertical tilt (Pitch) -> Gyro Y (along the board's physical long axis)
+        float gz = data.gyro.z;
+        float gy = data.gyro.y;
+
+        float deadzone = 1.8f; // 1.8 dps deadzone to filter hand tremor & sensor noise
+        float vx = 0.0f;
+        float vy = 0.0f;
+
+        if (fabsf(gz) > deadzone) {
+            vx = -gz; // Wrist turns right -> cursor moves right
         }
+        if (fabsf(gy) > deadzone) {
+            vy = -gy;  // Wrist tilts up -> cursor moves up, wrist tilts down -> cursor moves down
+        }
+
+        // Sub-pixel movement accumulator (100Hz IMU loop rate)
+        static float s_accum_x = 0.0f;
+        static float s_accum_y = 0.0f;
+        const float sens = 0.9f;
+
+        s_accum_x += vx * sens * 0.25f;
+        s_accum_y += vy * sens * 0.25f;
+
+        int16_t step_x = (int16_t)s_accum_x;
+        int16_t step_y = (int16_t)s_accum_y;
+
+        s_accum_x -= step_x;
+        s_accum_y -= step_y;
+
+        g_ui.mouse_x = step_x;
+        g_ui.mouse_y = step_y;
     } else {
         g_ui.mouse_x = 0;
         g_ui.mouse_y = 0;
