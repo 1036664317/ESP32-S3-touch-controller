@@ -9,7 +9,7 @@
 static const char *TAG = "UI";
 
 ui_state_t g_ui = {
-    .mode = MODE_JOYSTICK,
+    .mode = MODE_VR_GAMEPAD,
     .air_mouse_active = false,
     .sleeping = false,
     .last_activity_time = 0,
@@ -41,8 +41,10 @@ static lv_obj_t *joystick_zone;
 static lv_obj_t *joystick_cursor;
 static lv_obj_t *touchpad_zone;
 static lv_obj_t *touchpad_cursor;
+static lv_obj_t *lbl_pad_title;
+static lv_obj_t *lbl_pad_hint;
 
-// Bottom Bar VR Buttons (Quest 2 Layout)
+// Bottom Bar VR Buttons (Quest 2 Layout: 7 Buttons)
 static lv_obj_t *bottom_bar;
 static lv_obj_t *btn_trigger;
 static lv_obj_t *btn_grip;
@@ -50,6 +52,8 @@ static lv_obj_t *btn_a;
 static lv_obj_t *btn_b;
 static lv_obj_t *btn_menu;
 static lv_obj_t *btn_l3;
+static lv_obj_t *btn_mode;
+static lv_obj_t *lbl_btn_mode;
 
 // Joystick tracking
 static bool joy_touching = false;
@@ -139,10 +143,20 @@ static void event_btn_l3(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_PRESSED) {
         g_ui.button_l3 = true;
-        lv_obj_set_style_bg_color(btn_l3, lv_color_make(150, 70, 210), 0);
+        lv_obj_set_style_bg_color(btn_l3, lv_color_make(160, 70, 220), 0);
     } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_CANCEL) {
         g_ui.button_l3 = false;
         lv_obj_set_style_bg_color(btn_l3, lv_color_make(90, 45, 135), 0);
+    }
+}
+
+static void event_cycle_mode(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_CLICKED) {
+        ui_mode_t next_mode = (ui_mode_t)((g_ui.mode + 1) % 3);
+        ui_set_mode(next_mode);
+        ESP_LOGI(TAG, "Mode switched to: %d", next_mode);
     }
 }
 
@@ -349,11 +363,14 @@ esp_err_t ui_init(void)
     lv_obj_set_style_text_font(lbl_bat, &lv_font_montserrat_12, 0);
     lv_obj_align(lbl_bat, LV_ALIGN_CENTER, 0, 0);
 
+    // Clickable Mode Pill on Top-Right
     lbl_mode = lv_label_create(top_bar);
-    lv_label_set_text(lbl_mode, "Tap:Click | Long:RightClick | Swipe:Wheel");
+    lv_label_set_text(lbl_mode, "Mode: VR Gamepad [Tap to switch]");
     lv_obj_set_style_text_color(lbl_mode, lv_color_make(80, 230, 150), 0);
     lv_obj_set_style_text_font(lbl_mode, &lv_font_montserrat_12, 0);
     lv_obj_align(lbl_mode, LV_ALIGN_RIGHT_MID, -6, 0);
+    lv_obj_add_flag(lbl_mode, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(lbl_mode, event_cycle_mode, LV_EVENT_CLICKED, NULL);
 
     // ----------------------------------------------------
     // 2. LEFT ZONE: THUMBSTICK (X=2, Y=22, W=314, H=110)
@@ -407,13 +424,13 @@ esp_err_t ui_init(void)
     lv_obj_set_style_radius(touchpad_zone, 6, 0);
     lv_obj_clear_flag(touchpad_zone, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *lbl_pad = lv_label_create(touchpad_zone);
-    lv_label_set_text(lbl_pad, "TOUCHPAD (SCROLL / CLICK / RIGHT-CLICK)");
-    lv_obj_set_style_text_color(lbl_pad, lv_color_make(255, 170, 70), 0);
-    lv_obj_set_style_text_font(lbl_pad, &lv_font_montserrat_12, 0);
-    lv_obj_align(lbl_pad, LV_ALIGN_TOP_LEFT, 6, 2);
+    lbl_pad_title = lv_label_create(touchpad_zone);
+    lv_label_set_text(lbl_pad_title, "TOUCHPAD (LOOK / VIEW)");
+    lv_obj_set_style_text_color(lbl_pad_title, lv_color_make(255, 170, 70), 0);
+    lv_obj_set_style_text_font(lbl_pad_title, &lv_font_montserrat_12, 0);
+    lv_obj_align(lbl_pad_title, LV_ALIGN_TOP_LEFT, 6, 2);
 
-    // Crosshairs / Grid hint
+    // Crosshairs
     lv_obj_t *pad_ch_h = lv_obj_create(touchpad_zone);
     lv_obj_set_size(pad_ch_h, 70, 1);
     lv_obj_set_style_bg_color(pad_ch_h, lv_color_make(48, 56, 82), 0);
@@ -424,11 +441,11 @@ esp_err_t ui_init(void)
     lv_obj_set_style_bg_color(pad_ch_v, lv_color_make(48, 56, 82), 0);
     lv_obj_align(pad_ch_v, LV_ALIGN_CENTER, 0, 4);
 
-    lv_obj_t *pad_hint = lv_label_create(touchpad_zone);
-    lv_label_set_text(pad_hint, "Swipe: Wheel\nTap: Left Click\nLong Press: Right Click");
-    lv_obj_set_style_text_color(pad_hint, lv_color_make(90, 100, 130), 0);
-    lv_obj_set_style_text_font(pad_hint, &lv_font_montserrat_12, 0);
-    lv_obj_align(pad_hint, LV_ALIGN_CENTER, 0, 4);
+    lbl_pad_hint = lv_label_create(touchpad_zone);
+    lv_label_set_text(lbl_pad_hint, "Swipe: Look / View Stick\nTap: Click");
+    lv_obj_set_style_text_color(lbl_pad_hint, lv_color_make(90, 100, 130), 0);
+    lv_obj_set_style_text_font(lbl_pad_hint, &lv_font_montserrat_12, 0);
+    lv_obj_align(lbl_pad_hint, LV_ALIGN_CENTER, 0, 4);
 
     touchpad_cursor = lv_obj_create(touchpad_zone);
     lv_obj_set_size(touchpad_cursor, 22, 22);
@@ -440,7 +457,7 @@ esp_err_t ui_init(void)
     lv_obj_add_event_cb(touchpad_zone, event_touchpad_zone, LV_EVENT_ALL, NULL);
 
     // ----------------------------------------------------
-    // 4. BOTTOM BAR: QUEST 2 BLIND-TOUCH BUTTONS (Y=134, H=38)
+    // 4. BOTTOM BAR: QUEST 2 FULL BUTTONS (Y=134, H=38, 7 Buttons)
     // ----------------------------------------------------
     bottom_bar = lv_obj_create(scr_main);
     lv_obj_set_size(bottom_bar, LCD_WIDTH, BOTTOM_BAR_H);
@@ -451,79 +468,92 @@ esp_err_t ui_init(void)
     lv_obj_set_style_pad_all(bottom_bar, 1, 0);
     lv_obj_clear_flag(bottom_bar, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 1. TRIGGER (Width: 114)
+    // 1. TRIGGER (Width: 94)
     btn_trigger = lv_btn_create(bottom_bar);
-    lv_obj_set_size(btn_trigger, 114, 34);
+    lv_obj_set_size(btn_trigger, 94, 34);
     lv_obj_set_pos(btn_trigger, 2, 1);
     lv_obj_set_style_bg_color(btn_trigger, lv_color_make(200, 80, 20), 0);
     lv_obj_set_style_radius(btn_trigger, 5, 0);
     lv_obj_add_event_cb(btn_trigger, event_btn_trigger, LV_EVENT_ALL, NULL);
     lv_obj_t *lbl_trig = lv_label_create(btn_trigger);
     lv_label_set_text(lbl_trig, "TRIGGER");
-    lv_obj_set_style_text_font(lbl_trig, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_trig, &lv_font_montserrat_12, 0);
     lv_obj_center(lbl_trig);
 
-    // 2. GRIP (Width: 114)
+    // 2. GRIP (Width: 94)
     btn_grip = lv_btn_create(bottom_bar);
-    lv_obj_set_size(btn_grip, 114, 34);
-    lv_obj_set_pos(btn_grip, 120, 1);
+    lv_obj_set_size(btn_grip, 94, 34);
+    lv_obj_set_pos(btn_grip, 98, 1);
     lv_obj_set_style_bg_color(btn_grip, lv_color_make(20, 110, 180), 0);
     lv_obj_set_style_radius(btn_grip, 5, 0);
     lv_obj_add_event_cb(btn_grip, event_btn_grip, LV_EVENT_ALL, NULL);
     lv_obj_t *lbl_gp = lv_label_create(btn_grip);
     lv_label_set_text(lbl_gp, "GRIP");
-    lv_obj_set_style_text_font(lbl_gp, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_gp, &lv_font_montserrat_12, 0);
     lv_obj_center(lbl_gp);
 
-    // 3. Button A (Width: 85)
+    // 3. Button A (Width: 70)
     btn_a = lv_btn_create(bottom_bar);
-    lv_obj_set_size(btn_a, 85, 34);
-    lv_obj_set_pos(btn_a, 238, 1);
+    lv_obj_set_size(btn_a, 70, 34);
+    lv_obj_set_pos(btn_a, 194, 1);
     lv_obj_set_style_bg_color(btn_a, lv_color_make(35, 140, 55), 0);
     lv_obj_set_style_radius(btn_a, 5, 0);
     lv_obj_add_event_cb(btn_a, event_btn_a, LV_EVENT_ALL, NULL);
     lv_obj_t *lbl_a = lv_label_create(btn_a);
     lv_label_set_text(lbl_a, "A");
-    lv_obj_set_style_text_font(lbl_a, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(lbl_a, &lv_font_montserrat_14, 0);
     lv_obj_center(lbl_a);
 
-    // 4. Button B (Width: 85)
+    // 4. Button B (Width: 70)
     btn_b = lv_btn_create(bottom_bar);
-    lv_obj_set_size(btn_b, 85, 34);
-    lv_obj_set_pos(btn_b, 327, 1);
+    lv_obj_set_size(btn_b, 70, 34);
+    lv_obj_set_pos(btn_b, 266, 1);
     lv_obj_set_style_bg_color(btn_b, lv_color_make(160, 35, 35), 0);
     lv_obj_set_style_radius(btn_b, 5, 0);
     lv_obj_add_event_cb(btn_b, event_btn_b, LV_EVENT_ALL, NULL);
     lv_obj_t *lbl_b = lv_label_create(btn_b);
     lv_label_set_text(lbl_b, "B");
-    lv_obj_set_style_text_font(lbl_b, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(lbl_b, &lv_font_montserrat_14, 0);
     lv_obj_center(lbl_b);
 
-    // 5. MENU (Width: 100)
+    // 5. MENU (Width: 96)
     btn_menu = lv_btn_create(bottom_bar);
-    lv_obj_set_size(btn_menu, 100, 34);
-    lv_obj_set_pos(btn_menu, 416, 1);
+    lv_obj_set_size(btn_menu, 96, 34);
+    lv_obj_set_pos(btn_menu, 338, 1);
     lv_obj_set_style_bg_color(btn_menu, lv_color_make(50, 65, 85), 0);
     lv_obj_set_style_radius(btn_menu, 5, 0);
     lv_obj_add_event_cb(btn_menu, event_btn_menu, LV_EVENT_ALL, NULL);
     lv_obj_t *lbl_m = lv_label_create(btn_menu);
     lv_label_set_text(lbl_m, "MENU");
-    lv_obj_set_style_text_font(lbl_m, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_m, &lv_font_montserrat_12, 0);
     lv_obj_center(lbl_m);
 
-    // 6. THUMBSTICK CLICK L3 (Width: 118)
+    // 6. THUMBSTICK CLICK L3 (Width: 100)
     btn_l3 = lv_btn_create(bottom_bar);
-    lv_obj_set_size(btn_l3, 118, 34);
-    lv_obj_set_pos(btn_l3, 520, 1);
+    lv_obj_set_size(btn_l3, 100, 34);
+    lv_obj_set_pos(btn_l3, 436, 1);
     lv_obj_set_style_bg_color(btn_l3, lv_color_make(90, 45, 135), 0);
     lv_obj_set_style_radius(btn_l3, 5, 0);
     lv_obj_add_event_cb(btn_l3, event_btn_l3, LV_EVENT_ALL, NULL);
     lv_obj_t *lbl_l3 = lv_label_create(btn_l3);
     lv_label_set_text(lbl_l3, "STICK L3");
-    lv_obj_set_style_text_font(lbl_l3, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_l3, &lv_font_montserrat_12, 0);
     lv_obj_center(lbl_l3);
 
+    // 7. MODE SWITCH BUTTON (Width: 98)
+    btn_mode = lv_btn_create(bottom_bar);
+    lv_obj_set_size(btn_mode, 98, 34);
+    lv_obj_set_pos(btn_mode, 538, 1);
+    lv_obj_set_style_bg_color(btn_mode, lv_color_make(180, 50, 110), 0);
+    lv_obj_set_style_radius(btn_mode, 5, 0);
+    lv_obj_add_event_cb(btn_mode, event_cycle_mode, LV_EVENT_CLICKED, NULL);
+    lbl_btn_mode = lv_label_create(btn_mode);
+    lv_label_set_text(lbl_btn_mode, "MODE");
+    lv_obj_set_style_text_font(lbl_btn_mode, &lv_font_montserrat_12, 0);
+    lv_obj_center(lbl_btn_mode);
+
     g_ui.last_activity_time = esp_timer_get_time();
+    ui_set_mode(MODE_VR_GAMEPAD);
     ESP_LOGI(TAG, "Quest 2 UI initialized successfully");
     return ESP_OK;
 }
@@ -536,6 +566,34 @@ void ui_update(void)
 void ui_set_mode(ui_mode_t mode)
 {
     g_ui.mode = mode;
+
+    const char *mode_str = "VR Gamepad";
+    lv_color_t color = lv_color_make(80, 230, 150);
+
+    if (mode == MODE_TOUCHPAD_MOUSE) {
+        mode_str = "Touchpad Mouse";
+        color = lv_color_make(255, 170, 70);
+        if (lbl_pad_title) lv_label_set_text(lbl_pad_title, "TOUCHPAD (MOUSE / SCROLL)");
+        if (lbl_pad_hint)  lv_label_set_text(lbl_pad_hint, "Swipe: Wheel | Tap: Click | Long: Right-Click");
+    } else if (mode == MODE_MEDIA_REMOTE) {
+        mode_str = "Media Remote";
+        color = lv_color_make(100, 200, 255);
+        if (lbl_pad_title) lv_label_set_text(lbl_pad_title, "TOUCHPAD (MEDIA / MOVIE)");
+        if (lbl_pad_hint)  lv_label_set_text(lbl_pad_hint, "Swipe: Wheel Scroll | Tap: Click | Long: Menu");
+    } else {
+        mode_str = "VR Gamepad";
+        color = lv_color_make(80, 230, 150);
+        if (lbl_pad_title) lv_label_set_text(lbl_pad_title, "TOUCHPAD (LOOK / VIEW)");
+        if (lbl_pad_hint)  lv_label_set_text(lbl_pad_hint, "Swipe: Look Around | Tap: Click");
+    }
+
+    if (lbl_mode) {
+        lv_label_set_text_fmt(lbl_mode, "Mode: %s [Tap]", mode_str);
+        lv_obj_set_style_text_color(lbl_mode, color, 0);
+    }
+    if (lbl_btn_mode) {
+        lv_label_set_text_fmt(lbl_btn_mode, "%s", mode == MODE_VR_GAMEPAD ? "VR PAD" : (mode == MODE_TOUCHPAD_MOUSE ? "MOUSE" : "MEDIA"));
+    }
 }
 
 void ui_set_bt_status(bool connected)
@@ -556,7 +614,7 @@ void ui_set_battery(uint8_t percent)
 
 void ui_update_imu(mahony_state_t *mahony, qmi8658_dev_t *imu)
 {
-    // IMU 6-axis only records posture, never outputs mouse coordinates to avoid unwanted cursor movement
+    // IMU only updates angles, never sends mouse moves
     qmi8658_data_t data;
     if (qmi8658_read_data(imu, &data) != ESP_OK) return;
 

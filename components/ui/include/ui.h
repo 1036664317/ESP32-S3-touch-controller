@@ -31,10 +31,14 @@ extern "C" {
 #define TOUCHPAD_ZONE_W     314
 
 typedef enum {
-    MODE_JOYSTICK = 0,
-    MODE_AIR_MOUSE,
-    MODE_SCROLL,
+    MODE_VR_GAMEPAD = 0,    // 纯 VR 游戏手柄（左摇杆走位，右触控板视角转向）
+    MODE_TOUCHPAD_MOUSE,    // 触控板飞鼠模式（滑动滚轮翻页，单击左键，长按右键）
+    MODE_MEDIA_REMOTE,      // 影视多媒体遥控（滑动调音量，单击播放暂停）
 } ui_mode_t;
+
+#define MODE_JOYSTICK   MODE_VR_GAMEPAD
+#define MODE_SCROLL     MODE_TOUCHPAD_MOUSE
+#define MODE_AIR_MOUSE  MODE_MEDIA_REMOTE
 
 typedef struct {
     lv_disp_drv_t disp_drv;
