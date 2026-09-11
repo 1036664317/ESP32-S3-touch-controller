@@ -1,6 +1,7 @@
 #include "lcd_driver.h"
 #include "driver/ledc.h"
 #include "driver/gpio.h"
+#include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
