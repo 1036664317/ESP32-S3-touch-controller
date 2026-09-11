@@ -12,19 +12,23 @@
 extern "C" {
 #endif
 
-#define LCD_WIDTH   640
-#define LCD_HEIGHT  172
+// Physical & logical display resolutions
+#define LCD_WIDTH           640
+#define LCD_HEIGHT          172
+#define LCD_PHYS_WIDTH      172
+#define LCD_PHYS_HEIGHT     640
 
-#define LCD_PHYS_WIDTH   172
-#define LCD_PHYS_HEIGHT  640
+// UI Layout Coordinates (VR Controller Layout)
+#define TOP_BAR_H           20
+#define BOTTOM_BAR_H        38
+#define CONTENT_Y           (TOP_BAR_H + 2)
+#define CONTENT_H           (LCD_HEIGHT - TOP_BAR_H - BOTTOM_BAR_H - 4) // 110px
 
-#define JOYSTICK_ZONE_W     (LCD_WIDTH * 0.40f)
-#define SCROLL_ZONE_X       (int)(JOYSTICK_ZONE_W)
-#define SCROLL_ZONE_W       (LCD_WIDTH - SCROLL_ZONE_X)
-#define TOP_BAR_H           24
-#define BOTTOM_BAR_H        32
-#define CONTENT_Y           TOP_BAR_H
-#define CONTENT_H           (LCD_HEIGHT - TOP_BAR_H - BOTTOM_BAR_H)
+#define JOYSTICK_ZONE_X     2
+#define JOYSTICK_ZONE_W     314
+
+#define TOUCHPAD_ZONE_X     324
+#define TOUCHPAD_ZONE_W     314
 
 typedef enum {
     MODE_JOYSTICK = 0,
@@ -37,19 +41,28 @@ typedef struct {
     lv_indev_drv_t indev_drv;
     lv_disp_draw_buf_t draw_buf;
     lv_color_t *buf1;
-    lv_color_t *buf2;
-    lv_group_t *group;
     ui_mode_t mode;
     bool air_mouse_active;
-    float pitch, yaw;
+
+    // IMU 6-axis & angles
+    float pitch, yaw, roll;
     float pitch_offset, yaw_offset;
-    int16_t joy_x, joy_y;
+
+    // Controller input states
+    int16_t joy_x, joy_y;           // Left Thumbstick (-32767 ~ +32767)
+    int16_t touchpad_x, touchpad_y; // Right Touchpad / View Stick (-32767 ~ +32767)
     int16_t mouse_x, mouse_y;
     int8_t mouse_wheel;
     uint8_t mouse_buttons;
-    bool touch_pressed;
-    int touch_x, touch_y;
-    bool button_a, button_b, button_menu;
+
+    // Button states (Continuous press supported)
+    bool button_trigger; // VR Trigger
+    bool button_grip;    // VR Grip
+    bool button_a;       // Button A
+    bool button_b;       // Button B
+    bool button_menu;    // Button Menu
+
+    // Gestures & Power
     bool gesture_left, gesture_right;
     int64_t last_activity_time;
     bool sleeping;

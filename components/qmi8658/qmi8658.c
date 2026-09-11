@@ -90,22 +90,25 @@ esp_err_t qmi8658_init(qmi8658_dev_t *dev, i2c_port_t port, uint8_t addr)
     }
     ESP_LOGI(TAG, "QMI8658 detected, WHO_AM_I=0x%02X", whoami);
 
-    // Reset
-    qmi8658_write_reg_with_data(dev, QMI8658_CTRL7, 0x80);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // Soft Reset (0x60 = 0xB0)
+    qmi8658_write_reg_with_data(dev, 0x60, 0xB0);
+    vTaskDelay(pdMS_TO_TICKS(20));
 
-    // Configure accelerometer: 250Hz ODR, +/-8g range
-    qmi8658_write_reg_with_data(dev, QMI8658_CTRL2, 0x93);  // ODR=250Hz, Range=8g, enable
+    // CTRL1 (0x02): Enable address auto-increment (Bit 6 = 1)
+    qmi8658_write_reg_with_data(dev, QMI8658_CTRL1, 0x40);
+
+    // Configure accelerometer: 250Hz ODR, +/-8g range (no self-test)
+    qmi8658_write_reg_with_data(dev, QMI8658_CTRL2, 0x23);
     dev->accel_scale = 8.0f / 32768.0f;
 
-    // Configure gyroscope: 250Hz ODR, +/-500dps range
-    qmi8658_write_reg_with_data(dev, QMI8658_CTRL3, 0x95);  // ODR=250Hz, Range=500dps, enable
+    // Configure gyroscope: 250Hz ODR, +/-500dps range (no self-test)
+    qmi8658_write_reg_with_data(dev, QMI8658_CTRL3, 0x33);
     dev->gyro_scale = 500.0f / 32768.0f;
     dev->gyro_bias_x = 0.0f;
     dev->gyro_bias_y = 0.0f;
     dev->gyro_bias_z = 0.0f;
 
-    // Enable both sensors
+    // Enable both sensors in CTRL7 (bit 0=accel, bit 1=gyro)
     qmi8658_write_reg_with_data(dev, QMI8658_CTRL7, 0x03);
 
     ESP_LOGI(TAG, "QMI8658 initialized successfully");

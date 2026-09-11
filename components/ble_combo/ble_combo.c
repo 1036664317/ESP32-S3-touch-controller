@@ -20,69 +20,386 @@ static ble_combo_state_t state = {
     .device_type = BLE_COMBO_DEVICE_ALL,
 };
 
-static uint16_t gamepad_char_handle;
-static uint16_t mouse_char_handle;
-static uint16_t media_char_handle;
+static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+static uint16_t gamepad_char_handle = 0;
+static uint16_t mouse_char_handle = 0;
+static uint16_t media_char_handle = 0;
+static uint16_t battery_char_handle = 0;
+
 static void advertise(void);
+static int gap_event_cb(struct ble_gap_event *event, void *arg);
 
-// HID Report Descriptors (reserved for future GATT report map integration)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-const-variable"
-static const uint8_t hid_report_desc_gamepad[] = {
-    0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x01,
-    0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x32,
-    0x09, 0x35, 0x16, 0x01, 0x80, 0x26, 0xFF, 0x7F,
-    0x75, 0x10, 0x95, 0x04, 0x81, 0x02, 0x05, 0x01,
-    0x09, 0x39, 0x15, 0x00, 0x25, 0x07, 0x75, 0x01,
-    0x95, 0x08, 0x81, 0x42, 0x05, 0x09, 0x19, 0x01,
-    0x29, 0x10, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
-    0x95, 0x10, 0x81, 0x02, 0xC0
+// ==========================================
+// HID Report Map (Gamepad + Mouse + Media)
+// ==========================================
+static const uint8_t hid_report_map[] = {
+    // Gamepad (Report ID 1)
+    0x05, 0x01,        // USAGE_PAGE (Generic Desktop)
+    0x09, 0x05,        // USAGE (Gamepad)
+    0xA1, 0x01,        // COLLECTION (Application)
+    0x85, 0x01,        //   REPORT_ID (1)
+    // Left stick (X, Y) - Thumbstick Move
+    0x09, 0x30,        //   USAGE (X)
+    0x09, 0x31,        //   USAGE (Y)
+    0x16, 0x01, 0x80,  //   LOGICAL_MINIMUM (-32767)
+    0x26, 0xFF, 0x7F,  //   LOGICAL_MAXIMUM (32767)
+    0x75, 0x10,        //   REPORT_SIZE (16)
+    0x95, 0x02,        //   REPORT_COUNT (2)
+    0x81, 0x02,        //   INPUT (Data,Var,Abs)
+    // Right stick / Touchpad (Z, Rz) - Look / View
+    0x09, 0x32,        //   USAGE (Z)
+    0x09, 0x35,        //   USAGE (Rz)
+    0x16, 0x01, 0x80,  //   LOGICAL_MINIMUM (-32767)
+    0x26, 0xFF, 0x7F,  //   LOGICAL_MAXIMUM (32767)
+    0x75, 0x10,        //   REPORT_SIZE (16)
+    0x95, 0x02,        //   REPORT_COUNT (2)
+    0x81, 0x02,        //   INPUT (Data,Var,Abs)
+    // Hat switch (D-pad)
+    0x05, 0x01,        //   USAGE_PAGE (Generic Desktop)
+    0x09, 0x39,        //   USAGE (Hat switch)
+    0x15, 0x00,        //   LOGICAL_MINIMUM (0)
+    0x25, 0x07,        //   LOGICAL_MAXIMUM (7)
+    0x35, 0x00,        //   PHYSICAL_MINIMUM (0)
+    0x46, 0x3B, 0x01,  //   PHYSICAL_MAXIMUM (315)
+    0x65, 0x14,        //   UNIT (Eng Rot:Angular Pos)
+    0x75, 0x04,        //   REPORT_SIZE (4)
+    0x95, 0x01,        //   REPORT_COUNT (1)
+    0x81, 0x42,        //   INPUT (Data,Var,Abs,Null)
+    0x65, 0x00,        //   UNIT (None)
+    0x75, 0x04,        //   REPORT_SIZE (4) - padding
+    0x95, 0x01,        //   REPORT_COUNT (1)
+    0x81, 0x03,        //   INPUT (Cnst,Var,Abs)
+    // 16 Buttons (Trigger, Grip, A, B, Menu, etc.)
+    0x05, 0x09,        //   USAGE_PAGE (Button)
+    0x19, 0x01,        //   USAGE_MINIMUM (Button 1)
+    0x29, 0x10,        //   USAGE_MAXIMUM (Button 16)
+    0x15, 0x00,        //   LOGICAL_MINIMUM (0)
+    0x25, 0x01,        //   LOGICAL_MAXIMUM (1)
+    0x75, 0x01,        //   REPORT_SIZE (1)
+    0x95, 0x10,        //   REPORT_COUNT (16)
+    0x81, 0x02,        //   INPUT (Data,Var,Abs)
+    0xC0,              // END_COLLECTION
+
+    // Mouse (Report ID 2)
+    0x05, 0x01,        // USAGE_PAGE (Generic Desktop)
+    0x09, 0x02,        // USAGE (Mouse)
+    0xA1, 0x01,        // COLLECTION (Application)
+    0x85, 0x02,        //   REPORT_ID (2)
+    0x09, 0x01,        //   USAGE (Pointer)
+    0xA1, 0x00,        //   COLLECTION (Physical)
+    0x05, 0x09,        //     USAGE_PAGE (Button)
+    0x19, 0x01,        //     USAGE_MINIMUM (Button 1)
+    0x29, 0x03,        //     USAGE_MAXIMUM (Button 3)
+    0x15, 0x00,        //     LOGICAL_MINIMUM (0)
+    0x25, 0x01,        //     LOGICAL_MAXIMUM (1)
+    0x75, 0x01,        //     REPORT_SIZE (1)
+    0x95, 0x03,        //     REPORT_COUNT (3)
+    0x81, 0x02,        //     INPUT (Data,Var,Abs)
+    0x75, 0x05,        //     REPORT_SIZE (5)
+    0x95, 0x01,        //     REPORT_COUNT (1)
+    0x81, 0x03,        //     INPUT (Cnst,Var,Abs)
+    0x05, 0x01,        //     USAGE_PAGE (Generic Desktop)
+    0x09, 0x30,        //     USAGE (X)
+    0x09, 0x31,        //     USAGE (Y)
+    0x16, 0x01, 0x80,  //     LOGICAL_MINIMUM (-32767)
+    0x26, 0xFF, 0x7F,  //     LOGICAL_MAXIMUM (32767)
+    0x75, 0x10,        //     REPORT_SIZE (16)
+    0x95, 0x02,        //     REPORT_COUNT (2)
+    0x81, 0x06,        //     INPUT (Data,Var,Rel)
+    0x09, 0x38,        //     USAGE (Wheel)
+    0x15, 0x81,        //     LOGICAL_MINIMUM (-127)
+    0x25, 0x7F,        //     LOGICAL_MAXIMUM (127)
+    0x75, 0x08,        //     REPORT_SIZE (8)
+    0x95, 0x01,        //     REPORT_COUNT (1)
+    0x81, 0x06,        //     INPUT (Data,Var,Rel)
+    0xC0,              //   END_COLLECTION
+    0xC0,              // END_COLLECTION
+
+    // Media Keys (Report ID 3)
+    0x05, 0x0C,        // USAGE_PAGE (Consumer Devices)
+    0x09, 0x01,        // USAGE (Consumer Control)
+    0xA1, 0x01,        // COLLECTION (Application)
+    0x85, 0x03,        //   REPORT_ID (3)
+    0x19, 0x00,        //   USAGE_MINIMUM (0)
+    0x2A, 0xFF, 0x03,  //   USAGE_MAXIMUM (0x3FF)
+    0x15, 0x00,        //   LOGICAL_MINIMUM (0)
+    0x26, 0xFF, 0x03,  //   LOGICAL_MAXIMUM (0x3FF)
+    0x75, 0x10,        //   REPORT_SIZE (16)
+    0x95, 0x01,        //   REPORT_COUNT (1)
+    0x81, 0x00,        //   INPUT (Data,Ary,Abs)
+    0xC0               // END_COLLECTION
 };
 
-static const uint8_t hid_report_desc_mouse[] = {
-    0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x02,
-    0x09, 0x01, 0xA1, 0x00, 0x05, 0x09, 0x19, 0x01,
-    0x29, 0x03, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
-    0x95, 0x03, 0x81, 0x02, 0x75, 0x05, 0x95, 0x01,
-    0x81, 0x03, 0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
-    0x16, 0x01, 0x80, 0x26, 0xFF, 0x7F, 0x75, 0x10,
-    0x95, 0x02, 0x81, 0x06, 0x09, 0x38, 0x15, 0x81,
-    0x25, 0x7F, 0x75, 0x08, 0x95, 0x01, 0x81, 0x06,
-    0xC0, 0xC0
+// Report References: {Report ID, Report Type (1 = Input)}
+static const uint8_t gamepad_report_ref[] = {0x01, 0x01};
+static const uint8_t mouse_report_ref[]   = {0x02, 0x01};
+static const uint8_t media_report_ref[]   = {0x03, 0x01};
+
+// ==========================================
+// GATT Services Callbacks
+// ==========================================
+static int hid_chr_access(uint16_t conn_handle, uint16_t attr_handle,
+                          struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    uint16_t uuid16 = ble_uuid_u16(ctxt->chr->uuid);
+
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        switch (uuid16) {
+        case 0x2A4A: { // HID Information
+            static const uint8_t hid_info[] = {0x11, 0x01, 0x00, 0x02}; // bcdHID=1.11, bCountry=0, RemoteWake
+            os_mbuf_append(ctxt->om, hid_info, sizeof(hid_info));
+            return 0;
+        }
+        case 0x2A4B: { // Report Map
+            os_mbuf_append(ctxt->om, hid_report_map, sizeof(hid_report_map));
+            return 0;
+        }
+        case 0x2A4E: { // Protocol Mode
+            static const uint8_t proto_mode = 0x01; // Report Mode
+            os_mbuf_append(ctxt->om, &proto_mode, 1);
+            return 0;
+        }
+        case 0x2A4D: { // Input Report Read
+            static const uint8_t zero_report[12] = {0};
+            os_mbuf_append(ctxt->om, zero_report, sizeof(zero_report));
+            return 0;
+        }
+        default:
+            return 0;
+        }
+    }
+    return 0;
+}
+
+static int hid_dsc_access(uint16_t conn_handle, uint16_t attr_handle,
+                          struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    const uint8_t *ref = (const uint8_t *)arg;
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_DSC && ref) {
+        os_mbuf_append(ctxt->om, ref, 2);
+    }
+    return 0;
+}
+
+static int dev_info_access(uint16_t conn_handle, uint16_t attr_handle,
+                           struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    uint16_t uuid16 = ble_uuid_u16(ctxt->chr->uuid);
+
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        switch (uuid16) {
+        case 0x2A29: { // Manufacturer Name
+            const char *mfr = "Waveshare";
+            os_mbuf_append(ctxt->om, mfr, strlen(mfr));
+            return 0;
+        }
+        case 0x2A24: { // Model Number
+            const char *model = "ESP32-S3 VR";
+            os_mbuf_append(ctxt->om, model, strlen(model));
+            return 0;
+        }
+        case 0x2A50: { // PnP ID (Required by Android/Windows to bind HID driver)
+            // Vendor ID Source: 0x02 (USB Implementers Forum)
+            // Vendor ID: 0x02E5 (Espressif)
+            // Product ID: 0xABCD
+            // Product Version: 0x0100
+            static const uint8_t pnp_id[7] = {0x02, 0xe5, 0x02, 0xcd, 0xab, 0x00, 0x01};
+            os_mbuf_append(ctxt->om, pnp_id, sizeof(pnp_id));
+            return 0;
+        }
+        default:
+            return 0;
+        }
+    }
+    return 0;
+}
+
+static int bat_svr_access(uint16_t conn_handle, uint16_t attr_handle,
+                          struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        uint8_t bat_lvl = 100;
+        os_mbuf_append(ctxt->om, &bat_lvl, 1);
+        return 0;
+    }
+    return 0;
+}
+
+static const struct ble_gatt_svc_def gatt_svcs[] = {
+    // 1. Device Information Service (0x180A)
+    {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = BLE_UUID16_DECLARE(0x180A),
+        .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A29), // Manufacturer
+                .access_cb = dev_info_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A24), // Model Number
+                .access_cb = dev_info_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A50), // PnP ID
+                .access_cb = dev_info_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            { 0 }
+        },
+    },
+
+    // 2. Battery Service (0x180F)
+    {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = BLE_UUID16_DECLARE(0x180F),
+        .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A19), // Battery Level
+                .access_cb = bat_svr_access,
+                .val_handle = &battery_char_handle,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+            },
+            { 0 }
+        },
+    },
+
+    // 3. HID Service (0x1812)
+    {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = BLE_UUID16_DECLARE(0x1812),
+        .characteristics = (struct ble_gatt_chr_def[]) {
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A4A), // HID Information
+                .access_cb = hid_chr_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A4B), // Report Map
+                .access_cb = hid_chr_access,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A4C), // Control Point
+                .access_cb = hid_chr_access,
+                .flags = BLE_GATT_CHR_F_WRITE_NO_RSP,
+            },
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A4E), // Protocol Mode
+                .access_cb = hid_chr_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE_NO_RSP,
+            },
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A4D), // Gamepad Input Report
+                .access_cb = hid_chr_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &gamepad_char_handle,
+                .descriptors = (struct ble_gatt_dsc_def[]) {
+                    {
+                        .uuid = BLE_UUID16_DECLARE(0x2908), // Report Reference
+                        .att_flags = BLE_ATT_F_READ,
+                        .access_cb = hid_dsc_access,
+                        .arg = (void *)gamepad_report_ref,
+                    },
+                    { 0 }
+                }
+            },
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A4D), // Mouse Input Report
+                .access_cb = hid_chr_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &mouse_char_handle,
+                .descriptors = (struct ble_gatt_dsc_def[]) {
+                    {
+                        .uuid = BLE_UUID16_DECLARE(0x2908), // Report Reference
+                        .att_flags = BLE_ATT_F_READ,
+                        .access_cb = hid_dsc_access,
+                        .arg = (void *)mouse_report_ref,
+                    },
+                    { 0 }
+                }
+            },
+            {
+                .uuid = BLE_UUID16_DECLARE(0x2A4D), // Media Key Input Report
+                .access_cb = hid_chr_access,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &media_char_handle,
+                .descriptors = (struct ble_gatt_dsc_def[]) {
+                    {
+                        .uuid = BLE_UUID16_DECLARE(0x2908), // Report Reference
+                        .att_flags = BLE_ATT_F_READ,
+                        .access_cb = hid_dsc_access,
+                        .arg = (void *)media_report_ref,
+                    },
+                    { 0 }
+                }
+            },
+            { 0 }
+        },
+    },
+    { 0 }
 };
 
-static const uint8_t hid_report_desc_media[] = {
-    0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x03,
-    0x19, 0x00, 0x2A, 0xFF, 0x03, 0x15, 0x00, 0x26,
-    0xFF, 0x03, 0x75, 0x10, 0x95, 0x01, 0x81, 0x00,
-    0xC0
-};
-#pragma GCC diagnostic pop
+static void gatt_svr_init(void)
+{
+    ble_svc_gap_init();
+    ble_svc_gatt_init();
+    ble_gatts_count_cfg(gatt_svcs);
+    ble_gatts_add_svcs(gatt_svcs);
+}
 
+// ==========================================
+// GAP Event Handler & Advertising
+// ==========================================
 static int gap_event_cb(struct ble_gap_event *event, void *arg)
 {
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
+        ESP_LOGI(TAG, "GAP connection event status=%d", event->connect.status);
         if (event->connect.status == 0) {
             state.connected = true;
             state.advertising = false;
-            ESP_LOGI(TAG, "Connected successfully");
+            s_conn_handle = event->connect.conn_handle;
+            ESP_LOGI(TAG, "Connected successfully (conn_handle=%d)", s_conn_handle);
             if (on_connected_cb) on_connected_cb(cb_ctx);
         } else {
+            s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+            state.connected = false;
             ESP_LOGE(TAG, "Connection failed, restarting advertising");
             advertise();
         }
         break;
+
     case BLE_GAP_EVENT_DISCONNECT:
+        s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         state.connected = false;
         state.advertising = false;
         ESP_LOGI(TAG, "Disconnected, restarting advertising");
         if (on_disconnected_cb) on_disconnected_cb(cb_ctx);
         advertise();
         break;
+
     case BLE_GAP_EVENT_SUBSCRIBE:
-        ESP_LOGI(TAG, "Subscribe: conn=%d attr=%d",
-                 event->subscribe.conn_handle, event->subscribe.attr_handle);
+        ESP_LOGI(TAG, "Subscribe: conn=%d attr=%d cur_notify=%d",
+                 event->subscribe.conn_handle, event->subscribe.attr_handle,
+                 event->subscribe.cur_notify);
+        break;
+
+    case BLE_GAP_EVENT_ENC_CHANGE:
+        ESP_LOGI(TAG, "Encryption change: status=%d", event->enc_change.status);
+        break;
+
+    case BLE_GAP_EVENT_REPEAT_PAIRING: {
+        struct ble_gap_conn_desc desc;
+        ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc);
+        ble_store_util_delete_peer(&desc.peer_id_addr);
+        return BLE_GAP_REPEAT_PAIRING_RETRY;
+    }
+
+    case BLE_GAP_EVENT_ADV_COMPLETE:
+        state.advertising = false;
+        advertise();
         break;
     }
     return 0;
@@ -93,7 +410,7 @@ static void advertise(void)
     const char *device_name = "ESP32-S3 VR Controller";
     ble_svc_gap_device_name_set(device_name);
 
-    // 1. Primary Advertising Data (11 bytes <= 31 bytes limit)
+    // 1. Primary Advertising Data (<= 31 bytes)
     struct ble_hs_adv_fields adv_fields = {0};
     adv_fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     adv_fields.appearance = 0x03C4;  // Gamepad
@@ -109,7 +426,7 @@ static void advertise(void)
         ESP_LOGE(TAG, "Failed to set adv fields: %d", rc);
     }
 
-    // 2. Scan Response Data for device name (25 bytes <= 31 bytes limit)
+    // 2. Scan Response Data for device name
     struct ble_hs_adv_fields rsp_fields = {0};
     rsp_fields.name = (uint8_t *)device_name;
     rsp_fields.name_len = strlen(device_name);
@@ -137,60 +454,14 @@ static void advertise(void)
     }
 }
 
-static int gatt_svr_write_cb(uint16_t conn_handle, uint16_t attr_handle,
-                               struct ble_gatt_access_ctxt *ctxt, void *arg)
+static void ble_hs_on_sync(void)
 {
-    return 0;
+    advertise();
 }
 
-static const struct ble_gatt_svc_def gatt_svcs[] = {
-    {
-        .type = BLE_GATT_SVC_TYPE_PRIMARY,
-        .uuid = BLE_UUID16_DECLARE(0x1812),
-        .characteristics = (struct ble_gatt_chr_def[]) {
-            {
-                .uuid = BLE_UUID16_DECLARE(0x2A4A),
-                .access_cb = gatt_svr_write_cb,
-                .flags = BLE_GATT_CHR_F_READ,
-            },
-            {
-                .uuid = BLE_UUID16_DECLARE(0x2A4B),
-                .access_cb = gatt_svr_write_cb,
-                .flags = BLE_GATT_CHR_F_READ,
-            },
-            {
-                .uuid = BLE_UUID16_DECLARE(0x2A4C),
-                .access_cb = gatt_svr_write_cb,
-                .flags = BLE_GATT_CHR_F_WRITE_NO_RSP,
-            },
-            {
-                .uuid = BLE_UUID16_DECLARE(0x2A4D),
-                .access_cb = gatt_svr_write_cb,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
-                .val_handle = &gamepad_char_handle,
-            },
-            {
-                .uuid = BLE_UUID16_DECLARE(0x2A4D),
-                .access_cb = gatt_svr_write_cb,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
-                .val_handle = &mouse_char_handle,
-            },
-            {
-                .uuid = BLE_UUID16_DECLARE(0x2A4D),
-                .access_cb = gatt_svr_write_cb,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
-                .val_handle = &media_char_handle,
-            },
-            { 0 }
-        },
-    },
-    { 0 }
-};
-
-static void gatt_svr_init(void)
+static void ble_hs_on_reset(int reason)
 {
-    ble_gatts_count_cfg(gatt_svcs);
-    ble_gatts_add_svcs(gatt_svcs);
+    ESP_LOGE(TAG, "BLE Host reset: %d", reason);
 }
 
 static void ble_host_task(void *param)
@@ -205,8 +476,16 @@ esp_err_t ble_combo_init(ble_combo_device_type_t type)
     state.connected = false;
 
     nimble_port_init();
-    ble_hs_cfg.reset_cb = NULL;
-    ble_hs_cfg.sync_cb = NULL;
+
+    // Security Manager (SMP) Configuration: Just Works auto-bonding
+    ble_hs_cfg.sync_cb = ble_hs_on_sync;
+    ble_hs_cfg.reset_cb = ble_hs_on_reset;
+    ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
+    ble_hs_cfg.sm_bonding = 1;
+    ble_hs_cfg.sm_mitm = 0;
+    ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
 
     gatt_svr_init();
 
@@ -231,10 +510,12 @@ esp_err_t ble_combo_stop(void)
 
 esp_err_t ble_combo_send_gamepad(ble_combo_gamepad_t *pad)
 {
-    if (!state.connected || !gamepad_char_handle) return ESP_ERR_INVALID_STATE;
+    if (!state.connected || s_conn_handle == BLE_HS_CONN_HANDLE_NONE || !gamepad_char_handle) {
+        return ESP_ERR_INVALID_STATE;
+    }
 
-    uint8_t buf[13];
-    buf[0] = 0x01;
+    uint8_t buf[12];
+    buf[0] = 0x01; // Report ID
     memcpy(&buf[1], &pad->left_x, 2);
     memcpy(&buf[3], &pad->left_y, 2);
     memcpy(&buf[5], &pad->right_x, 2);
@@ -242,20 +523,21 @@ esp_err_t ble_combo_send_gamepad(ble_combo_gamepad_t *pad)
     buf[9] = pad->hat;
     buf[10] = pad->buttons & 0xFF;
     buf[11] = (pad->buttons >> 8) & 0xFF;
-    buf[12] = 0;
 
     struct os_mbuf *om = ble_hs_mbuf_from_flat(buf, sizeof(buf));
     if (!om) return ESP_ERR_NO_MEM;
-    ble_gattc_notify_custom(0, gamepad_char_handle, om);
-    return ESP_OK;
+    int rc = ble_gatts_notify_custom(s_conn_handle, gamepad_char_handle, om);
+    return (rc == 0) ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t ble_combo_send_mouse(ble_combo_mouse_t *mouse)
 {
-    if (!state.connected || !mouse_char_handle) return ESP_ERR_INVALID_STATE;
+    if (!state.connected || s_conn_handle == BLE_HS_CONN_HANDLE_NONE || !mouse_char_handle) {
+        return ESP_ERR_INVALID_STATE;
+    }
 
     uint8_t buf[7];
-    buf[0] = 0x02;
+    buf[0] = 0x02; // Report ID
     buf[1] = mouse->buttons;
     memcpy(&buf[2], &mouse->x, 2);
     memcpy(&buf[4], &mouse->y, 2);
@@ -263,22 +545,24 @@ esp_err_t ble_combo_send_mouse(ble_combo_mouse_t *mouse)
 
     struct os_mbuf *om = ble_hs_mbuf_from_flat(buf, sizeof(buf));
     if (!om) return ESP_ERR_NO_MEM;
-    ble_gattc_notify_custom(0, mouse_char_handle, om);
-    return ESP_OK;
+    int rc = ble_gatts_notify_custom(s_conn_handle, mouse_char_handle, om);
+    return (rc == 0) ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t ble_combo_send_media(ble_combo_media_t *media)
 {
-    if (!state.connected || !media_char_handle) return ESP_ERR_INVALID_STATE;
+    if (!state.connected || s_conn_handle == BLE_HS_CONN_HANDLE_NONE || !media_char_handle) {
+        return ESP_ERR_INVALID_STATE;
+    }
 
     uint8_t buf[3];
-    buf[0] = 0x03;
+    buf[0] = 0x03; // Report ID
     memcpy(&buf[1], &media->keys, 2);
 
     struct os_mbuf *om = ble_hs_mbuf_from_flat(buf, sizeof(buf));
     if (!om) return ESP_ERR_NO_MEM;
-    ble_gattc_notify_custom(0, media_char_handle, om);
-    return ESP_OK;
+    int rc = ble_gatts_notify_custom(s_conn_handle, media_char_handle, om);
+    return (rc == 0) ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t ble_combo_send_mouse_button(uint8_t buttons)
