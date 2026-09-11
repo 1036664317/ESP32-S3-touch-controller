@@ -90,31 +90,37 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
 
 static void advertise(void)
 {
-    struct ble_hs_adv_fields fields = {0};
     const char *device_name = "ESP32-S3 VR Controller";
-
     ble_svc_gap_device_name_set(device_name);
 
-    fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.name = (uint8_t *)device_name;
-    fields.name_len = strlen(device_name);
-    fields.name_is_complete = 1;
+    // 1. Primary Advertising Data (11 bytes <= 31 bytes limit)
+    struct ble_hs_adv_fields adv_fields = {0};
+    adv_fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    adv_fields.appearance = 0x03C4;  // Gamepad
+    adv_fields.appearance_is_present = 1;
 
-    // Appearance: 0x03C4 (Gamepad)
-    fields.appearance = 0x03C4;
-    fields.appearance_is_present = 1;
-
-    // HID Service UUID 0x1812
     static const ble_uuid16_t hid_uuid = BLE_UUID16_INIT(0x1812);
-    fields.uuids16 = (ble_uuid16_t *)&hid_uuid;
-    fields.num_uuids16 = 1;
-    fields.uuids16_is_complete = 1;
+    adv_fields.uuids16 = (ble_uuid16_t *)&hid_uuid;
+    adv_fields.num_uuids16 = 1;
+    adv_fields.uuids16_is_complete = 1;
 
-    int rc = ble_gap_adv_set_fields(&fields);
+    int rc = ble_gap_adv_set_fields(&adv_fields);
     if (rc != 0) {
         ESP_LOGE(TAG, "Failed to set adv fields: %d", rc);
     }
 
+    // 2. Scan Response Data for device name (25 bytes <= 31 bytes limit)
+    struct ble_hs_adv_fields rsp_fields = {0};
+    rsp_fields.name = (uint8_t *)device_name;
+    rsp_fields.name_len = strlen(device_name);
+    rsp_fields.name_is_complete = 1;
+
+    rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "Failed to set scan rsp fields: %d", rc);
+    }
+
+    // 3. Start advertising
     struct ble_gap_adv_params adv_params = {0};
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
