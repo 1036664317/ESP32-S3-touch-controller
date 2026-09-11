@@ -8,6 +8,8 @@
 #include "services/gatt/ble_svc_gatt.h"
 #include <string.h>
 
+void ble_store_config_init(void);
+
 static const char *TAG = "BLE_COMBO";
 
 static ble_combo_connected_cb_t on_connected_cb = NULL;
@@ -363,6 +365,9 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
             s_conn_handle = event->connect.conn_handle;
             ESP_LOGI(TAG, "Connected successfully (conn_handle=%d)", s_conn_handle);
             if (on_connected_cb) on_connected_cb(cb_ctx);
+
+            // Initiate security/pairing negotiation with the central
+            ble_gap_security_initiate(s_conn_handle);
         } else {
             s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
             state.connected = false;
@@ -389,6 +394,34 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_ENC_CHANGE:
         ESP_LOGI(TAG, "Encryption change: status=%d", event->enc_change.status);
         break;
+
+    case BLE_GAP_EVENT_PASSKEY_ACTION: {
+        ESP_LOGI(TAG, "Passkey action event: action=%d", event->passkey.params.action);
+        struct ble_sm_io pkey = {0};
+        if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
+            pkey.action = event->passkey.params.action;
+            pkey.numcmp_accept = 1;
+            int rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+            ESP_LOGI(TAG, "ble_sm_inject_io (numcmp) result: %d", rc);
+        } else if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
+            pkey.action = event->passkey.params.action;
+            pkey.passkey = 123456;
+            ESP_LOGI(TAG, "Passkey display: %06ld", (long)pkey.passkey);
+            int rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+            ESP_LOGI(TAG, "ble_sm_inject_io (disp) result: %d", rc);
+        } else if (event->passkey.params.action == BLE_SM_IOACT_INPUT) {
+            pkey.action = event->passkey.params.action;
+            pkey.passkey = 123456;
+            int rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+            ESP_LOGI(TAG, "ble_sm_inject_io (input) result: %d", rc);
+        } else if (event->passkey.params.action == BLE_SM_IOACT_OOB) {
+            static uint8_t oob[16] = {0};
+            pkey.action = event->passkey.params.action;
+            memcpy(pkey.oob, oob, 16);
+            ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+        }
+        return 0;
+    }
 
     case BLE_GAP_EVENT_REPEAT_PAIRING: {
         struct ble_gap_conn_desc desc;
@@ -480,12 +513,16 @@ esp_err_t ble_combo_init(ble_combo_device_type_t type)
     // Security Manager (SMP) Configuration: Just Works auto-bonding
     ble_hs_cfg.sync_cb = ble_hs_on_sync;
     ble_hs_cfg.reset_cb = ble_hs_on_reset;
+    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
     ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
     ble_hs_cfg.sm_bonding = 1;
     ble_hs_cfg.sm_mitm = 0;
     ble_hs_cfg.sm_sc = 1;
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+
+    // Initialize NimBLE NVS storage
+    ble_store_config_init();
 
     gatt_svr_init();
 
@@ -497,6 +534,9 @@ esp_err_t ble_combo_init(ble_combo_device_type_t type)
 
 esp_err_t ble_combo_start(void)
 {
+    if (state.advertising || state.connected) {
+        return ESP_OK;
+    }
     advertise();
     return ESP_OK;
 }
