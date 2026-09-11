@@ -103,7 +103,7 @@ void app_main(void)
 
     // Initialize LCD (QSPI, pins handled internally)
     ESP_LOGI(TAG, "Initializing LCD...");
-    ret = lcd_init(&g_lcd, LCD_WIDTH, LCD_HEIGHT);
+    ret = lcd_init(&g_lcd, LCD_PHYS_WIDTH, LCD_PHYS_HEIGHT);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LCD init failed: %s", esp_err_to_name(ret));
         return;
@@ -112,12 +112,12 @@ void app_main(void)
     // === TEST: Fill screen with solid red BEFORE LVGL init ===
     ESP_LOGI(TAG, "TEST: Filling screen with red...");
     lcd_fill_screen(&g_lcd, 0xF800);  // RGB565 red
-    ESP_LOGI(TAG, "TEST: Red fill done. Waiting 5 seconds...");
-    vTaskDelay(pdMS_TO_TICKS(5000));
+    ESP_LOGI(TAG, "TEST: Red fill done. Waiting 2 seconds...");
+    vTaskDelay(pdMS_TO_TICKS(2000));
     ESP_LOGI(TAG, "TEST: Now filling screen with green...");
     lcd_fill_screen(&g_lcd, 0x07E0);  // RGB565 green
-    ESP_LOGI(TAG, "TEST: Green fill done. Waiting 5 seconds...");
-    vTaskDelay(pdMS_TO_TICKS(5000));
+    ESP_LOGI(TAG, "TEST: Green fill done. Waiting 2 seconds...");
+    vTaskDelay(pdMS_TO_TICKS(2000));
 
     // Initialize touch (I2C1 on GPIO17/18)
     ESP_LOGI(TAG, "Initializing touch...");

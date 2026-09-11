@@ -1,15 +1,17 @@
 #include "lcd_driver.h"
 #include "driver/ledc.h"
-#include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "esp_lcd_panel_io.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include <string.h>
 
 static const char *TAG = "LCD";
 
+// GPIO pins for ESP32-S3-Touch-LCD-3.49 V1
 #define LCD_CS_PIN      9
 #define LCD_PCLK_PIN    10
 #define LCD_D0_PIN      11
@@ -24,6 +26,17 @@ static const char *TAG = "LCD";
 #define AXS_OPCODE_WRITE_CMD   0x02
 #define AXS_OPCODE_WRITE_COLOR 0x32
 
+static SemaphoreHandle_t s_flush_sem = NULL;
+
+static bool on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
+{
+    BaseType_t need_yield = pdFALSE;
+    if (s_flush_sem) {
+        xSemaphoreGiveFromISR(s_flush_sem, &need_yield);
+    }
+    return need_yield == pdTRUE;
+}
+
 static void lcd_reset(void)
 {
     gpio_set_direction(LCD_RST_PIN, GPIO_MODE_OUTPUT);
@@ -32,54 +45,19 @@ static void lcd_reset(void)
     gpio_set_level(LCD_RST_PIN, 0);
     vTaskDelay(pdMS_TO_TICKS(250));
     gpio_set_level(LCD_RST_PIN, 1);
-    vTaskDelay(pdMS_TO_TICKS(30));
+    vTaskDelay(pdMS_TO_TICKS(120));
 }
 
-static esp_err_t qspi_write_cmd(spi_device_handle_t spi, int cmd,
-                                  const void *param, size_t param_size)
+static esp_err_t tx_cmd(esp_lcd_panel_io_handle_t io, int cmd, const void *param, size_t param_size)
 {
-    uint32_t qspi_cmd = (AXS_OPCODE_WRITE_CMD << 24) | ((cmd & 0xFF) << 8);
-    ESP_LOGD(TAG, "qspi_cmd: cmd=0x%02X qspi=0x%08X param=%d", cmd, qspi_cmd, (int)param_size);
-
-    spi_transaction_t t = {
-        .length = 32,
-        .tx_buffer = &qspi_cmd,
-        .flags = SPI_TRANS_MODE_QIO | (param_size > 0 ? SPI_TRANS_CS_KEEP_ACTIVE : 0),
-    };
-    esp_err_t ret = spi_device_polling_transmit(spi, &t);
-    if (ret != ESP_OK) return ret;
-
-    if (param && param_size > 0) {
-        spi_transaction_t t2 = {
-            .length = param_size * 8,
-            .tx_buffer = param,
-            .flags = SPI_TRANS_MODE_QIO,
-        };
-        ret = spi_device_polling_transmit(spi, &t2);
-    }
-    return ret;
+    int qspi_cmd = (AXS_OPCODE_WRITE_CMD << 24) | ((cmd & 0xFF) << 8);
+    return esp_lcd_panel_io_tx_param(io, qspi_cmd, param, param_size);
 }
 
-static esp_err_t qspi_write_color(spi_device_handle_t spi, int cmd,
-                                    const void *color, size_t color_size)
+static esp_err_t tx_color(esp_lcd_panel_io_handle_t io, int cmd, const void *param, size_t param_size)
 {
-    uint32_t qspi_cmd = (AXS_OPCODE_WRITE_COLOR << 24) | ((cmd & 0xFF) << 8);
-    ESP_LOGD(TAG, "qspi_color: cmd=0x%02X qspi=0x%08X len=%d", cmd, qspi_cmd, (int)color_size);
-
-    spi_transaction_t t_cmd = {
-        .length = 32,
-        .tx_buffer = &qspi_cmd,
-        .flags = SPI_TRANS_MODE_QIO | SPI_TRANS_CS_KEEP_ACTIVE,
-    };
-    esp_err_t ret = spi_device_polling_transmit(spi, &t_cmd);
-    if (ret != ESP_OK) return ret;
-
-    spi_transaction_t t_data = {
-        .length = color_size * 8,
-        .tx_buffer = color,
-        .flags = SPI_TRANS_MODE_QIO,
-    };
-    return spi_device_polling_transmit(spi, &t_data);
+    int qspi_cmd = (AXS_OPCODE_WRITE_COLOR << 24) | ((cmd & 0xFF) << 8);
+    return esp_lcd_panel_io_tx_color(io, qspi_cmd, param, param_size);
 }
 
 typedef struct {
@@ -126,11 +104,11 @@ static const lcd_init_cmd_t vendor_specific_init_default[] = {
 
 esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
 {
-    dev->width = width;
-    dev->height = height;
-    dev->spi_dev = NULL;
+    dev->width = LCD_PHYS_WIDTH;
+    dev->height = LCD_PHYS_HEIGHT;
+    dev->io_handle = NULL;
 
-    ESP_LOGI(TAG, "Initializing QSPI LCD %dx%d (raw SPI)", width, height);
+    ESP_LOGI(TAG, "Initializing AXS15231B QSPI LCD (phys %dx%d)", LCD_PHYS_WIDTH, LCD_PHYS_HEIGHT);
 
     lcd_reset();
 
@@ -140,52 +118,68 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
         .sclk_io_num = LCD_PCLK_PIN,
         .data2_io_num = LCD_D2_PIN,
         .data3_io_num = LCD_D3_PIN,
-        .max_transfer_sz = width * 40 * sizeof(uint16_t),
+        .max_transfer_sz = LCD_PHYS_WIDTH * 64 * sizeof(uint16_t),
     };
 
     esp_err_t ret = spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO);
-    if (ret != ESP_OK) {
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    spi_device_interface_config_t devcfg = {
-        .flags = SPI_DEVICE_HALFDUPLEX,
-        .clock_speed_hz = LCD_PCLK_HZ,
-        .mode = 3,
-        .spics_io_num = LCD_CS_PIN,
-        .queue_size = 10,
+    if (!s_flush_sem) {
+        s_flush_sem = xSemaphoreCreateBinary();
+    }
+
+    esp_lcd_panel_io_spi_config_t io_config = {
+        .cs_gpio_num = LCD_CS_PIN,
+        .dc_gpio_num = -1,
+        .spi_mode = 3,
+        .pclk_hz = LCD_PCLK_HZ,
+        .trans_queue_depth = 10,
+        .on_color_trans_done = on_color_trans_done,
+        .user_ctx = NULL,
+        .lcd_cmd_bits = 32,
+        .lcd_param_bits = 8,
+        .flags = {
+            .quad_mode = true,
+        },
     };
 
-    spi_device_handle_t spi;
-    ret = spi_bus_add_device(LCD_HOST, &devcfg, &spi);
+    esp_lcd_panel_io_handle_t io_handle = NULL;
+    ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "SPI device add failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "LCD panel IO init failed: %s", esp_err_to_name(ret));
         return ret;
     }
-    dev->spi_dev = spi;
+    dev->io_handle = io_handle;
 
-    qspi_write_cmd(spi, 0x11, NULL, 0);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // Sleep out
+    tx_cmd(io_handle, 0x11, NULL, 0);
+    vTaskDelay(pdMS_TO_TICKS(120));
 
+    // MADCTL: default orientation (RGB order)
     uint8_t madctl = 0x00;
-    qspi_write_cmd(spi, 0x36, &madctl, 1);
+    tx_cmd(io_handle, 0x36, &madctl, 1);
 
+    // COLMOD: 16-bit/pixel (RGB565)
     uint8_t colmod = 0x55;
-    qspi_write_cmd(spi, 0x3A, &colmod, 1);
+    tx_cmd(io_handle, 0x3A, &colmod, 1);
 
+    // Vendor initialization sequence
     int num_cmds = sizeof(vendor_specific_init_default) / sizeof(vendor_specific_init_default[0]);
     for (int i = 0; i < num_cmds; i++) {
-        qspi_write_cmd(spi, vendor_specific_init_default[i].cmd,
-                       vendor_specific_init_default[i].data,
-                       vendor_specific_init_default[i].data_bytes);
+        tx_cmd(io_handle, vendor_specific_init_default[i].cmd,
+               vendor_specific_init_default[i].data,
+               vendor_specific_init_default[i].data_bytes);
         if (vendor_specific_init_default[i].delay_ms > 0) {
             vTaskDelay(pdMS_TO_TICKS(vendor_specific_init_default[i].delay_ms));
         }
     }
 
-    ESP_LOGI(TAG, "AXS15231B QSPI init complete (raw SPI)");
+    ESP_LOGI(TAG, "AXS15231B QSPI initialization complete");
 
+    // Initialize backlight PWM via LEDC
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_TIMER_8_BIT,
@@ -205,27 +199,36 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
     };
     ledc_channel_config(&ledc_channel);
 
-    ESP_LOGI(TAG, "QSPI LCD initialized (raw SPI)");
+    ESP_LOGI(TAG, "QSPI LCD initialized successfully");
     return ESP_OK;
 }
 
-esp_err_t lcd_flush_area(lcd_dev_t *dev, uint16_t x1, uint16_t y1,
-                          uint16_t x2, uint16_t y2, const uint16_t *color_p)
+esp_err_t lcd_draw_bitmap(lcd_dev_t *dev, int x_start, int y_start, int x_end, int y_end, const void *color_data)
 {
-    if (!dev->spi_dev) return ESP_ERR_INVALID_STATE;
+    if (!dev || !dev->io_handle) return ESP_ERR_INVALID_STATE;
 
-    uint16_t w = x2 - x1 + 1;
-    uint16_t h = y2 - y1 + 1;
-    size_t len = w * h * sizeof(uint16_t);
-    ESP_LOGD(TAG, "flush: (%d,%d)-(%d,%d) %dx%d len=%d", x1, y1, x2, y2, w, h, (int)len);
+    // Set column address (CASET 0x2A)
+    uint8_t caset[4] = {
+        (uint8_t)((x_start >> 8) & 0xFF),
+        (uint8_t)(x_start & 0xFF),
+        (uint8_t)(((x_end - 1) >> 8) & 0xFF),
+        (uint8_t)((x_end - 1) & 0xFF)
+    };
+    tx_cmd(dev->io_handle, 0x2A, caset, 4);
 
-    uint8_t caset[4] = {x1 >> 8, x1 & 0xFF, x2 >> 8, x2 & 0xFF};
-    qspi_write_cmd(dev->spi_dev, 0x2A, caset, 4);
-
-    if (y1 == 0) {
-        qspi_write_color(dev->spi_dev, 0x2C, color_p, len);
+    // In QSPI mode, AXS15231B does not use RASET.
+    // Line 0 uses RAMWR (0x2C), subsequent continuous lines use RAMWRC (0x3C).
+    size_t len = (x_end - x_start) * (y_end - y_start) * sizeof(uint16_t);
+    if (y_start == 0) {
+        tx_color(dev->io_handle, 0x2C, color_data, len);
     } else {
-        qspi_write_color(dev->spi_dev, 0x3C, color_p, len);
+        tx_color(dev->io_handle, 0x3C, color_data, len);
+    }
+
+    if (s_flush_sem) {
+        if (xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(500)) != pdTRUE) {
+            ESP_LOGW(TAG, "DMA transfer timeout at line %d-%d", y_start, y_end);
+        }
     }
 
     return ESP_OK;
@@ -233,26 +236,32 @@ esp_err_t lcd_flush_area(lcd_dev_t *dev, uint16_t x1, uint16_t y1,
 
 esp_err_t lcd_fill_screen(lcd_dev_t *dev, uint16_t color)
 {
-    if (!dev->spi_dev) return ESP_ERR_INVALID_STATE;
+    if (!dev || !dev->io_handle) return ESP_ERR_INVALID_STATE;
 
-    ESP_LOGI(TAG, "Filling screen 0x%04X", color);
+    ESP_LOGI(TAG, "Filling full screen %dx%d with color 0x%04X", LCD_PHYS_WIDTH, LCD_PHYS_HEIGHT, color);
 
-    uint8_t caset[4] = {0x00, 0x00, (dev->width - 1) >> 8, (dev->width - 1) & 0xFF};
-    qspi_write_cmd(dev->spi_dev, 0x2A, caset, 4);
-
-    uint16_t *line = heap_caps_malloc(dev->width * sizeof(uint16_t), MALLOC_CAP_DMA);
-    if (!line) return ESP_ERR_NO_MEM;
-    for (int i = 0; i < dev->width; i++) line[i] = color;
-
-    for (int y = 0; y < dev->height; y++) {
-        if (y == 0) {
-            qspi_write_color(dev->spi_dev, 0x2C, line, dev->width * sizeof(uint16_t));
-        } else {
-            qspi_write_color(dev->spi_dev, 0x3C, line, dev->width * sizeof(uint16_t));
-        }
+    const int chunk_lines = 64;
+    size_t chunk_bytes = LCD_PHYS_WIDTH * chunk_lines * sizeof(uint16_t);
+    uint16_t *buf = heap_caps_malloc(chunk_bytes, MALLOC_CAP_DMA);
+    if (!buf) {
+        ESP_LOGE(TAG, "Failed to allocate fill screen DMA buffer");
+        return ESP_ERR_NO_MEM;
     }
-    free(line);
-    ESP_LOGI(TAG, "Fill complete");
+
+    for (int i = 0; i < LCD_PHYS_WIDTH * chunk_lines; i++) {
+        buf[i] = color;
+    }
+
+    for (int y = 0; y < LCD_PHYS_HEIGHT; y += chunk_lines) {
+        int lines = chunk_lines;
+        if (y + lines > LCD_PHYS_HEIGHT) {
+            lines = LCD_PHYS_HEIGHT - y;
+        }
+        lcd_draw_bitmap(dev, 0, y, LCD_PHYS_WIDTH, y + lines, buf);
+    }
+
+    free(buf);
+    ESP_LOGI(TAG, "Full screen fill complete");
     return ESP_OK;
 }
 

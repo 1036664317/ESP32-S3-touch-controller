@@ -1,5 +1,5 @@
 idf_component_register(
     SRCS "lcd_driver.c"
     INCLUDE_DIRS "include"
-    REQUIRES driver esp_timer
+    REQUIRES driver esp_timer esp_lcd
 )

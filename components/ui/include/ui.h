@@ -15,6 +15,9 @@ extern "C" {
 #define LCD_WIDTH   640
 #define LCD_HEIGHT  172
 
+#define LCD_PHYS_WIDTH   172
+#define LCD_PHYS_HEIGHT  640
+
 #define JOYSTICK_ZONE_W     (LCD_WIDTH * 0.40f)
 #define SCROLL_ZONE_X       (int)(JOYSTICK_ZONE_W)
 #define SCROLL_ZONE_W       (LCD_WIDTH - SCROLL_ZONE_X)

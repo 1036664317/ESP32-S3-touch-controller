@@ -43,6 +43,10 @@ static float gesture_accel_history[10];
 static int gesture_idx = 0;
 static int64_t gesture_last_time = 0;
 
+// LCD rotation & DMA transfer buffers
+static uint16_t *s_rot_buf = NULL;
+static uint16_t *s_dma_buf = NULL;
+
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data);
 
@@ -152,20 +156,36 @@ esp_err_t ui_init(void)
     // Init LVGL
     lv_init();
 
-    // Allocate draw buffers in DMA-capable internal RAM
-    g_ui.buf1 = heap_caps_malloc(LCD_WIDTH * 40 * sizeof(lv_color_t), MALLOC_CAP_DMA);
+    // Allocate draw buffer in PSRAM for full screen (640x172)
+    g_ui.buf1 = heap_caps_malloc(LCD_WIDTH * LCD_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
     if (!g_ui.buf1) {
-        ESP_LOGE(TAG, "Failed to allocate LVGL buffer");
+        ESP_LOGE(TAG, "Failed to allocate LVGL PSRAM buffer");
         return ESP_ERR_NO_MEM;
     }
-    lv_disp_draw_buf_init(&g_ui.draw_buf, g_ui.buf1, NULL, LCD_WIDTH * 40);
+
+    // Allocate 90-degree rotated physical buffer (172x640) in PSRAM
+    s_rot_buf = heap_caps_malloc(LCD_PHYS_WIDTH * LCD_PHYS_HEIGHT * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    if (!s_rot_buf) {
+        ESP_LOGE(TAG, "Failed to allocate rotation buffer in PSRAM");
+        return ESP_ERR_NO_MEM;
+    }
+
+    // Allocate DMA-capable buffer (64 lines = 22KB) in internal RAM
+    s_dma_buf = heap_caps_malloc(LCD_PHYS_WIDTH * 64 * sizeof(uint16_t), MALLOC_CAP_DMA);
+    if (!s_dma_buf) {
+        ESP_LOGE(TAG, "Failed to allocate DMA chunk buffer");
+        return ESP_ERR_NO_MEM;
+    }
+
+    lv_disp_draw_buf_init(&g_ui.draw_buf, g_ui.buf1, NULL, LCD_WIDTH * LCD_HEIGHT);
 
     // Display driver
     lv_disp_drv_init(&g_ui.disp_drv);
-    g_ui.disp_drv.hor_res = LCD_WIDTH;
-    g_ui.disp_drv.ver_res = LCD_HEIGHT;
+    g_ui.disp_drv.hor_res = LCD_WIDTH;   // 640
+    g_ui.disp_drv.ver_res = LCD_HEIGHT;  // 172
     g_ui.disp_drv.flush_cb = disp_flush_cb;
     g_ui.disp_drv.draw_buf = &g_ui.draw_buf;
+    g_ui.disp_drv.full_refresh = 1;      // Required for AXS15231B QSPI mode
     lv_disp_drv_register(&g_ui.disp_drv);
 
     // Input device driver
@@ -569,9 +589,31 @@ void ui_wake_from_imu(qmi8658_dev_t *imu)
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p)
 {
     extern lcd_dev_t g_lcd;
-    ESP_LOGD("UI", "flush_cb: area=(%d,%d)-(%d,%d) buf=%p",
-             area->x1, area->y1, area->x2, area->y2, color_p);
-    lcd_flush_area(&g_lcd, area->x1, area->y1, area->x2, area->y2, (const uint16_t *)color_p);
+
+    // Rotate 640x172 logical UI buffer 90 degrees clockwise into 172x640 physical buffer
+    // logical (x, y) -> physical (phys_x, phys_y):
+    // phys_x = LCD_HEIGHT - 1 - y  (0 ~ 171)
+    // phys_y = x                   (0 ~ 639)
+    const uint16_t *src = (const uint16_t *)color_p;
+    for (int y = 0; y < LCD_HEIGHT; y++) {
+        int phys_x = LCD_HEIGHT - 1 - y;
+        for (int x = 0; x < LCD_WIDTH; x++) {
+            int phys_y = x;
+            s_rot_buf[phys_y * LCD_PHYS_WIDTH + phys_x] = src[y * LCD_WIDTH + x];
+        }
+    }
+
+    // Push chunks of rows via DMA to AXS15231B sequentially
+    const int chunk_rows = 64;
+    for (int y = 0; y < LCD_PHYS_HEIGHT; y += chunk_rows) {
+        int lines = chunk_rows;
+        if (y + lines > LCD_PHYS_HEIGHT) {
+            lines = LCD_PHYS_HEIGHT - y;
+        }
+        memcpy(s_dma_buf, &s_rot_buf[y * LCD_PHYS_WIDTH], lines * LCD_PHYS_WIDTH * sizeof(uint16_t));
+        lcd_draw_bitmap(&g_lcd, 0, y, LCD_PHYS_WIDTH, y + lines, s_dma_buf);
+    }
+
     lv_disp_flush_ready(drv);
 }
 
@@ -583,7 +625,19 @@ static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
     axs15231b_touch_data_t tdata;
     if (axs15231b_read_touch(&g_touch, &tdata) == ESP_OK && tdata.pressed) {
         data->state = LV_INDEV_STATE_PRESSED;
-        data->point.x = tdata.x;
-        data->point.y = tdata.y;
+
+        // Convert physical touch coordinates (0~171, 0~639) to rotated UI coordinates (0~639, 0~171):
+        // phys_x = 171 - ui_y  => ui_y = 171 - phys_x
+        // phys_y = ui_x        => ui_x = phys_y
+        int ui_x = tdata.y;
+        int ui_y = LCD_HEIGHT - 1 - tdata.x;
+
+        if (ui_x < 0) ui_x = 0;
+        if (ui_x >= LCD_WIDTH) ui_x = LCD_WIDTH - 1;
+        if (ui_y < 0) ui_y = 0;
+        if (ui_y >= LCD_HEIGHT) ui_y = LCD_HEIGHT - 1;
+
+        data->point.x = ui_x;
+        data->point.y = ui_y;
     }
 }
