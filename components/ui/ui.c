@@ -588,9 +588,9 @@ esp_err_t ui_init(void)
     lv_obj_add_event_cb(mouse_touchpad_zone, event_super_touchpad, LV_EVENT_ALL, NULL);
 
     lv_obj_t *lbl_ms_hint = lv_label_create(mouse_touchpad_zone);
-    lv_label_set_text(lbl_ms_hint, "SUPER TOUCHPAD\nSwipe: Wheel Scroll | Tap: Left Click | Long Press: Right Click");
+    lv_label_set_text(lbl_ms_hint, "TOUCHPAD + AIR MOUSE\nTouch & Wave: Air Mouse | Swipe: Wheel Scroll\nTap: Left Click | Long Press: Right Click");
     lv_obj_set_style_text_color(lbl_ms_hint, lv_color_make(130, 150, 190), 0);
-    lv_obj_set_style_text_font(lbl_ms_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_ms_hint, &lv_font_montserrat_12, 0);
     lv_obj_align(lbl_ms_hint, LV_ALIGN_CENTER, 0, 0);
 
     mouse_touchpad_cursor = lv_obj_create(mouse_touchpad_zone);
@@ -730,12 +730,15 @@ void ui_update(void)
 void ui_set_mode(ui_mode_t mode)
 {
     g_ui.mode = mode;
+    g_ui.air_mouse_active = (mode == MODE_TOUCHPAD_MOUSE);
 
     // Reset touch & button transient states
     g_ui.joy_x = 0;
     g_ui.joy_y = 0;
     g_ui.touchpad_x = 0;
     g_ui.touchpad_y = 0;
+    g_ui.mouse_x = 0;
+    g_ui.mouse_y = 0;
     g_ui.mouse_wheel = 0;
     g_ui.mouse_buttons = 0;
     g_ui.button_trigger = false;
@@ -753,7 +756,7 @@ void ui_set_mode(ui_mode_t mode)
     lv_color_t color = lv_color_make(80, 230, 150);
 
     if (mode == MODE_TOUCHPAD_MOUSE) {
-        mode_name = "Touchpad Mouse";
+        mode_name = "Touch + AirMouse";
         color = lv_color_make(255, 170, 70);
         if (cont_mouse) lv_obj_clear_flag(cont_mouse, LV_OBJ_FLAG_HIDDEN);
     } else if (mode == MODE_MEDIA_REMOTE) {
@@ -800,6 +803,31 @@ void ui_update_imu(mahony_state_t *mahony, qmi8658_dev_t *imu)
                   data.gyro.z * dps_to_rad);
 
     mahony_get_angles(mahony, &g_ui.pitch, &g_ui.yaw, &g_ui.roll);
+
+    // Touch-to-Aim Air Mouse:
+    // Only active when finger is on touchpad AND not performing a dedicated wheel scroll
+    if (g_ui.mode == MODE_TOUCHPAD_MOUSE && pad_touching && !pad_is_scrolling) {
+        float vx = -data.gyro.z; // Horizontal yaw rotation
+        float vy = data.gyro.x;  // Vertical pitch tilt (wrist down -> cursor down, wrist up -> cursor up)
+
+        float deadzone = 2.2f;   // Filter slight tremor
+        float sens = 0.6f;       // Smooth laser-pointer sensitivity
+
+        if (fabsf(vx) > deadzone) {
+            g_ui.mouse_x = (int16_t)(vx * sens);
+        } else {
+            g_ui.mouse_x = 0;
+        }
+
+        if (fabsf(vy) > deadzone) {
+            g_ui.mouse_y = (int16_t)(vy * sens);
+        } else {
+            g_ui.mouse_y = 0;
+        }
+    } else {
+        g_ui.mouse_x = 0;
+        g_ui.mouse_y = 0;
+    }
 }
 
 void ui_process_touch(axs15231b_dev_t *touch_dev)
@@ -829,11 +857,11 @@ void ui_send_reports(ble_combo_state_t *ble_state)
         ble_combo_send_gamepad(&pad);
     }
 
-    // 2. Send Mouse Report (Wheel scroll / Click / Right click)
-    if (g_ui.mouse_wheel != 0 || g_ui.mouse_buttons != 0) {
+    // 2. Send Mouse Report (Air Mouse move / Wheel scroll / Click / Right click)
+    if (g_ui.mouse_x != 0 || g_ui.mouse_y != 0 || g_ui.mouse_wheel != 0 || g_ui.mouse_buttons != 0) {
         ble_combo_mouse_t mouse = {
-            .x = 0,
-            .y = 0,
+            .x = g_ui.mouse_x,
+            .y = g_ui.mouse_y,
             .wheel = g_ui.mouse_wheel,
             .buttons = g_ui.mouse_buttons,
         };
@@ -843,10 +871,14 @@ void ui_send_reports(ble_combo_state_t *ble_state)
             vTaskDelay(pdMS_TO_TICKS(15));
             mouse.buttons = 0;
             mouse.wheel = 0;
+            mouse.x = 0;
+            mouse.y = 0;
             ble_combo_send_mouse(&mouse);
             g_ui.mouse_buttons = 0;
         }
         g_ui.mouse_wheel = 0;
+        g_ui.mouse_x = 0;
+        g_ui.mouse_y = 0;
     }
 
     // Back key in Mouse Mode mapped to B button
