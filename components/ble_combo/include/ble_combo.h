@@ -59,12 +59,14 @@ void ble_combo_register_callbacks(ble_combo_connected_cb_t on_connect,
                                    ble_combo_disconnected_cb_t on_disconnect,
                                    void *ctx);
 
-// Convenience: send media keys and release
-#define MEDIA_KEY_NEXT      0x0001
-#define MEDIA_KEY_PREV      0x0002
-#define MEDIA_KEY_PLAY      0x0004
-#define MEDIA_KEY_PAUSE     0x0008
-#define MEDIA_KEY_MUTE      0x0010
+#define MEDIA_KEY_NEXT          0x0001
+#define MEDIA_KEY_PREV          0x0002
+#define MEDIA_KEY_PLAY          0x0004
+#define MEDIA_KEY_PAUSE         0x0008
+#define MEDIA_KEY_MUTE          0x0010
+#define MEDIA_KEY_VOL_UP        0x0020
+#define MEDIA_KEY_VOL_DOWN      0x0040
+#define MEDIA_KEY_PLAY_PAUSE    0x0080
 
 #ifdef __cplusplus
 }
