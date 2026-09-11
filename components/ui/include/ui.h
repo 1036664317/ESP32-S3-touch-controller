@@ -61,6 +61,7 @@ typedef struct {
     bool button_a;       // Button A
     bool button_b;       // Button B
     bool button_menu;    // Button Menu
+    bool button_l3;      // Thumbstick Click (L3)
 
     // Gestures & Power
     bool gesture_left, gesture_right;
