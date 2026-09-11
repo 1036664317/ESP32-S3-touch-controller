@@ -147,7 +147,8 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
 
     ESP_LOGI(TAG, "AXS15231B QSPI initialization complete (Display ON)");
 
-    // 5. Backlight: Ensure GPIO output is High first, then setup LEDC
+    // 5. Backlight: Active LOW PWM on GPIO8 (duty 0 = 100% brightness, duty 255 = OFF)
+    // First drive GPIO low to immediately turn on backlight, then configure LEDC
     gpio_config_t bl_conf = {
         .intr_type = GPIO_INTR_DISABLE,
         .mode = GPIO_MODE_OUTPUT,
@@ -156,7 +157,7 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
         .pull_up_en = GPIO_PULLUP_ENABLE,
     };
     gpio_config(&bl_conf);
-    gpio_set_level(LCD_BL_PIN, 1);
+    gpio_set_level(LCD_BL_PIN, 0);  // Low level = Backlight ON
 
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -172,11 +173,11 @@ esp_err_t lcd_init(lcd_dev_t *dev, uint16_t width, uint16_t height)
         .channel = LEDC_CHANNEL_1,
         .timer_sel = LEDC_TIMER_3,
         .gpio_num = LCD_BL_PIN,
-        .duty = 255,
+        .duty = 0,  // 0 = Full brightness (0xff - 255 in Waveshare BSP)
         .hpoint = 0,
     };
     ledc_channel_config(&ledc_channel);
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 255);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
 
     ESP_LOGI(TAG, "QSPI LCD initialized successfully");
@@ -247,7 +248,9 @@ esp_err_t lcd_fill_screen(lcd_dev_t *dev, uint16_t color)
 
 esp_err_t lcd_set_brightness(uint8_t brightness)
 {
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, brightness);
+    // Backlight is active LOW on this hardware (0 = 100%, 255 = 0%)
+    uint32_t duty = 255 - brightness;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
     return ESP_OK;
 }
